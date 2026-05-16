@@ -1,24 +1,26 @@
 """
-07_gemma_training_data_gen_en.py
-==================================
-[Gemma 트랙 - 영어 LMIC 버전] Gemma SFT 학습 데이터 생성
+synthetic_data.py
+=================
+Generate LMIC-specialized training data for Gemma 4 LoRA fine-tuning.
 
-사하라 이남 아프리카 + 기타 LMIC 농촌 의료 환경 대상으로
-영어 학습 데이터 5,000건을 룰 기반으로 생성합니다.
+Generates 5,000 rule-based English training samples targeting community health
+workers in sub-Saharan Africa and other low-resource settings.
 
-기존 한국어 버전(07_gemma_training_data_gen.py)과의 차이:
-  1. 시나리오 풀 영어화 + LMIC 컨텍스트 강화
-  2. 알비노/HIV+/야외노동자 등 LMIC 특이 위험군 추가
-  3. 자원 제약 (specialist 거리, 시설 부족) 반영 권고
-  4. 환자 친화적 영어 표현 (community health worker 대상)
-  5. 5,000건으로 확장 (다양성 강화)
-  6. 응답 톤 3종 (concise/detailed/patient-friendly)
+Key features (vs. earlier Korean prototype):
+  1. Fully English scenario pool with strengthened LMIC context
+  2. LMIC-specific risk groups added (albinism, HIV+, outdoor laborers)
+  3. Resource constraints reflected in recommendations
+       (specialist distance, facility limitations)
+  4. Patient-friendly English phrasing for community health workers
+  5. 5,000 samples for diversity
+  6. Three response tones (concise / detailed / patient-friendly)
 
-실행: python 07_gemma_training_data_gen_en.py
+Run via:
+    python scripts/04_generate_training_data.py
 
-산출물:
-  outputs/gemma_training_data_en/training_data.jsonl
-  outputs/gemma_training_data_en/scenario_distribution.json
+Outputs:
+    outputs/gemma_training_data_en/training_data.jsonl
+    outputs/gemma_training_data_en/scenario_distribution.json
 """
 
 import sys
@@ -31,16 +33,25 @@ from dataclasses import dataclass, asdict
 import pandas as pd
 from tqdm import tqdm
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from configs.config import (
-    OUTPUT_DIR, SPLIT_DIR,
-    CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
-    CONFIDENCE_THRESHOLD,
-)
+try:
+    from configs.config import (
+        OUTPUT_DIR, SPLIT_DIR,
+        CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
+        CONFIDENCE_THRESHOLD,
+    )
+except ImportError:
+    _project_root = Path(__file__).resolve().parent.parent.parent.parent
+    if str(_project_root) not in sys.path:
+        sys.path.insert(0, str(_project_root))
+    from configs.config import (
+        OUTPUT_DIR, SPLIT_DIR,
+        CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
+        CONFIDENCE_THRESHOLD,
+    )
 
 
 # ============================================================
-# 1. LMIC System Prompt
+# 1. LMIC system prompt
 # ============================================================
 SYSTEM_PROMPT_EN = """You are a skin lesion screening assistant designed for community health workers in low-resource settings, particularly rural areas of sub-Saharan Africa and other LMICs (Low- and Middle-Income Countries) where dermatologist density is below 1 per million population.
 
@@ -77,7 +88,7 @@ Output format: Strictly valid JSON with the following fields:
 
 
 # ============================================================
-# 2. LMIC 환자 프로파일
+# 2. LMIC patient profiles
 # ============================================================
 PATIENT_PROFILES = [
     {
@@ -154,7 +165,7 @@ PATIENT_PROFILES = [
     },
 ]
 
-# 신체 부위 (LMIC에서 흔한 부위 강조)
+# Body sites (emphasizing locations common in LMIC dermatology presentations)
 BODY_SITES_EN = [
     "scalp",
     "face",
@@ -174,7 +185,7 @@ BODY_SITES_EN = [
     "foot sole",
 ]
 
-# 증상 표현 변형
+# Symptom variations
 SYMPTOMS_EN = [
     "asymptomatic",
     "intermittent itching",
@@ -190,7 +201,7 @@ SYMPTOMS_EN = [
     "no notable changes",
 ]
 
-# 자원 제약 컨텍스트 (LMIC 특화)
+# Resource constraint context (LMIC-specific)
 RESOURCE_CONSTRAINTS_EN = [
     "Patient travel to nearest dermatologist requires 200+ km journey",
     "No biopsy facilities in this primary care setting",
@@ -200,12 +211,12 @@ RESOURCE_CONSTRAINTS_EN = [
     "Teledermatology service available via African Teledermatology Project",
 ]
 
-# 응답 톤 변형
+# Response tone variations
 RESPONSE_TONES = ["concise", "detailed", "patient_friendly"]
 
 
 # ============================================================
-# 3. Grad-CAM 서술 템플릿 (클래스별, 5개씩)
+# 3. Grad-CAM description templates (5 per class)
 # ============================================================
 GRAD_CAM_TEMPLATES_EN = {
     "mel": [
@@ -261,7 +272,7 @@ GRAD_CAM_TEMPLATES_EN = {
 
 
 # ============================================================
-# 4. 시나리오 데이터 클래스
+# 4. Scenario dataclass
 # ============================================================
 @dataclass
 class Scenario:
@@ -283,17 +294,21 @@ class Scenario:
 
 
 # ============================================================
-# 5. 시나리오 생성 로직
+# 5. Scenario generation logic
 # ============================================================
 def sample_patient_profile(target_class: str) -> Dict:
-    """클래스에 맞는 환자 프로파일 샘플링."""
-    # 알비노 특화 클래스에는 알비노 프로파일 우선
+    """Sample a patient profile matched to the target class."""
+    # Albinism patients are over-represented for sun-induced cancers
+    # since they are a critical LMIC risk group (1000x cancer risk)
     if target_class in ["mel", "bcc", "akiec"] and random.random() < 0.25:
-        # 25% 확률로 알비노 환자 (LMIC 특이 위험군)
+        # 25% chance of albinism patient (LMIC-specific risk group)
         candidates = [p for p in PATIENT_PROFILES if "albinism" in p["name"]]
     elif target_class == "nv" and random.random() < 0.4:
-        # 양성 모반은 일반 LMIC 환자가 더 흔함
-        candidates = [p for p in PATIENT_PROFILES if p["name"] in ["general_lmic", "rural_farmer"]]
+        # Benign nevi more common in general LMIC primary care
+        candidates = [
+            p for p in PATIENT_PROFILES
+            if p["name"] in ["general_lmic", "rural_farmer"]
+        ]
     else:
         candidates = PATIENT_PROFILES
     return random.choice(candidates)
@@ -303,10 +318,10 @@ def generate_scenario(
     true_class: str,
     scenario_type: str,
 ) -> Scenario:
-    """단일 시나리오 생성."""
+    """Generate a single scenario."""
     is_malignant = true_class in MALIGNANT_CLASSES
 
-    # 신뢰도 결정
+    # Determine confidence range based on scenario type
     if scenario_type == "high_conf_malignant":
         predicted_class = true_class
         probability = random.uniform(0.85, 0.99)
@@ -317,7 +332,7 @@ def generate_scenario(
         predicted_class = true_class
         probability = random.uniform(0.70, 0.85)
     elif scenario_type == "low_conf":
-        # 낮은 신뢰도: 50% 확률로 잘못된 예측
+        # Low confidence: 50% chance of incorrect prediction
         if random.random() < 0.5:
             predicted_class = random.choice([c for c in CLASS_NAMES if c != true_class])
         else:
@@ -330,7 +345,7 @@ def generate_scenario(
         predicted_class = true_class
         probability = random.uniform(0.50, 0.99)
 
-    # 환자 프로파일
+    # Patient profile
     profile = sample_patient_profile(predicted_class)
     age = random.randint(*profile["ages"])
     sex = random.choice(["male", "female"])
@@ -363,10 +378,10 @@ def generate_scenario(
 
 
 # ============================================================
-# 6. User Prompt 빌드
+# 6. User prompt builder
 # ============================================================
 def build_user_prompt(s: Scenario, rag_context: str = "") -> str:
-    """User 메시지 (Vision 결과 + 환자 정보 + RAG)."""
+    """Build user message (Vision output + patient info + RAG context)."""
     parts = []
 
     parts.append("## Vision Classifier Output\n")
@@ -396,17 +411,19 @@ def build_user_prompt(s: Scenario, rag_context: str = "") -> str:
         parts.append(rag_context)
         parts.append("")
 
-    parts.append(f"Please provide a structured assessment in valid JSON format. "
-                 f"Response style: {s.response_tone}.")
+    parts.append(
+        f"Please provide a structured assessment in valid JSON format. "
+        f"Response style: {s.response_tone}."
+    )
 
     return "\n".join(parts)
 
 
 # ============================================================
-# 7. Assistant 응답 생성 (룰 기반, 영어)
+# 7. Assistant response generation (rule-based, English)
 # ============================================================
 def generate_response(s: Scenario) -> Dict:
-    """클래스 + 신뢰도 + 톤에 따른 룰 기반 응답."""
+    """Rule-based response generation based on class, confidence, and tone."""
 
     # === observed_features ===
     features = []
@@ -484,7 +501,7 @@ def generate_response(s: Scenario) -> Dict:
     if s.predicted_class in MALIGNANT_CLASSES:
         evidence.append("WHO cancer early detection protocols")
 
-    # === recommendation (LMIC 자원 제약 반영) ===
+    # === recommendation (incorporates LMIC resource constraints) ===
     if s.is_malignant and s.probability >= CONFIDENCE_THRESHOLD:
         urgency = "urgent"
         rec = (
@@ -522,7 +539,7 @@ def generate_response(s: Scenario) -> Dict:
             f"Provide patient with self-monitoring guidance in the interim."
         )
 
-    # === patient_summary (영어, 평이한 표현) ===
+    # === patient_summary (plain English) ===
     if urgency == "urgent":
         patient_summary = (
             "This skin spot needs urgent doctor check. "
@@ -548,19 +565,21 @@ def generate_response(s: Scenario) -> Dict:
             "This is AI screening - see doctor if you are worried."
         )
 
-    # 톤별 조정
+    # Tone-specific adjustments
     if s.response_tone == "concise":
-        # patient_summary 짧게
-        patient_summary = patient_summary.split(". ")[0] + ". " + \
-                          patient_summary.split(". ")[-1]
+        # Shorter patient_summary
+        patient_summary = (
+            patient_summary.split(". ")[0] + ". " +
+            patient_summary.split(". ")[-1]
+        )
     elif s.response_tone == "detailed":
-        # 더 상세하게
+        # More context
         patient_summary += (
             f" Your specific situation ({s.patient_profile['context']}) "
             f"warrants extra attention to skin changes."
         )
 
-    # === limitations (LMIC 특화 안전 고지) ===
+    # === limitations (LMIC-specific safety disclaimer) ===
     limitations = (
         "This is an AI-assisted screening tool, not a medical diagnosis. "
         "The system relies on Vision Classifier output and limited patient information; "
@@ -585,10 +604,10 @@ def generate_response(s: Scenario) -> Dict:
 
 
 # ============================================================
-# 8. 학습 샘플 빌드
+# 8. Training sample builder
 # ============================================================
 def build_training_sample(scenario: Scenario, rag_context: str = "") -> Dict:
-    """전체 messages 형식의 학습 샘플."""
+    """Build a complete training sample in messages format."""
     user_prompt = build_user_prompt(scenario, rag_context)
     response = generate_response(scenario)
 
@@ -608,10 +627,10 @@ def build_training_sample(scenario: Scenario, rag_context: str = "") -> Dict:
 
 
 # ============================================================
-# 9. 분포 설계
+# 9. Distribution design
 # ============================================================
 def design_distribution(total: int = 5000) -> List[Dict]:
-    """5,000건의 시나리오 분포 설계."""
+    """Design the scenario distribution across 5,000 samples."""
     distribution = {
         "high_conf_malignant": int(total * 0.30),     # 1,500
         "high_conf_benign": int(total * 0.30),        # 1,500
@@ -620,13 +639,14 @@ def design_distribution(total: int = 5000) -> List[Dict]:
         "albinism_specific": int(total * 0.05),       # 250
     }
 
-    # 클래스 풀 정의
+    # Class pools for each scenario type
     class_pools = {
-        "high_conf_malignant": MALIGNANT_CLASSES,    # mel, bcc, akiec
-        "high_conf_benign": BENIGN_CLASSES,           # nv, bkl, df, vasc
+        "high_conf_malignant": MALIGNANT_CLASSES,     # mel, bcc, akiec
+        "high_conf_benign": BENIGN_CLASSES,            # nv, bkl, df, vasc
         "borderline": CLASS_NAMES,
         "low_conf": CLASS_NAMES,
-        "albinism_specific": ["mel", "bcc", "akiec"],  # 알비노는 피부암 위험
+        # Albinism patients face elevated risk of all skin cancers
+        "albinism_specific": ["mel", "bcc", "akiec"],
     }
 
     plan = []
@@ -641,16 +661,16 @@ def design_distribution(total: int = 5000) -> List[Dict]:
 
 
 # ============================================================
-# 10. 메인 실행
+# 10. Main entry point
 # ============================================================
 def main():
     print("=" * 60)
-    print(" [3주차] Gemma 학습 데이터 생성 — 영어 LMIC 버전")
+    print(" Gemma Training Data Generation - English LMIC Version")
     print("=" * 60)
 
     random.seed(42)
 
-    # --- 분포 설계 ---
+    # --- Distribution design ---
     total_samples = 5000
     plan = design_distribution(total=total_samples)
 
@@ -658,21 +678,21 @@ def main():
     for p in plan:
         type_dist[p["scenario_type"]] = type_dist.get(p["scenario_type"], 0) + 1
 
-    print(f"\n[시나리오 분포 — 총 {total_samples}건]")
+    print(f"\n[Scenario distribution - total {total_samples} samples]")
     for stype, count in type_dist.items():
-        print(f"  {stype:<22}: {count:>4}건 ({count/total_samples*100:.1f}%)")
+        print(f"  {stype:<22}: {count:>4} ({count/total_samples*100:.1f}%)")
 
-    # --- 클래스별 카운트 ---
+    # --- Class counts ---
     class_count = {c: 0 for c in CLASS_NAMES}
     for p in plan:
         class_count[p["true_class"]] += 1
 
-    print(f"\n[클래스 분포]")
+    print(f"\n[Class distribution]")
     for cls, count in class_count.items():
-        marker = " (악성)" if cls in MALIGNANT_CLASSES else ""
-        print(f"  {cls}: {count}건{marker}")
+        marker = " (malignant)" if cls in MALIGNANT_CLASSES else ""
+        print(f"  {cls}: {count}{marker}")
 
-    # --- 데이터 생성 ---
+    # --- Data generation ---
     output_dir = OUTPUT_DIR / "gemma_training_data_en"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / "training_data.jsonl"
@@ -681,8 +701,8 @@ def main():
     profile_dist = {}
     tone_dist = {}
 
-    print(f"\n[생성 중]")
-    for spec in tqdm(plan, desc="샘플 생성"):
+    print(f"\n[Generating samples]")
+    for spec in tqdm(plan, desc="Generating"):
         scenario = generate_scenario(spec["true_class"], spec["scenario_type"])
         sample = build_training_sample(scenario)
         samples.append(sample)
@@ -692,14 +712,14 @@ def main():
         tone_dist[scenario.response_tone] = \
             tone_dist.get(scenario.response_tone, 0) + 1
 
-    # --- JSONL 저장 ---
+    # --- Save JSONL ---
     with open(output_path, "w", encoding="utf-8") as f:
         for sample in samples:
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")
-    print(f"\n[저장] {output_path}")
-    print(f"  파일 크기: {output_path.stat().st_size / 1024 / 1024:.1f} MB")
+    print(f"\n[Saved] {output_path}")
+    print(f"  File size: {output_path.stat().st_size / 1024 / 1024:.1f} MB")
 
-    # --- 분포 통계 저장 ---
+    # --- Save distribution statistics ---
     stats = {
         "total_samples": len(samples),
         "scenario_distribution": type_dist,
@@ -713,36 +733,36 @@ def main():
     stats_path = output_dir / "scenario_distribution.json"
     with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
-    print(f"[통계] {stats_path}")
+    print(f"[Statistics] {stats_path}")
 
-    # --- 환자 프로파일 분포 출력 ---
-    print(f"\n[환자 프로파일 분포]")
+    # --- Patient profile distribution ---
+    print(f"\n[Patient profile distribution]")
     for prof, count in sorted(profile_dist.items(), key=lambda x: -x[1]):
-        print(f"  {prof:<25}: {count:>4}건 ({count/total_samples*100:.1f}%)")
+        print(f"  {prof:<25}: {count:>4} ({count/total_samples*100:.1f}%)")
 
-    print(f"\n[응답 톤 분포]")
+    print(f"\n[Response tone distribution]")
     for tone, count in tone_dist.items():
-        print(f"  {tone:<20}: {count:>4}건 ({count/total_samples*100:.1f}%)")
+        print(f"  {tone:<20}: {count:>4} ({count/total_samples*100:.1f}%)")
 
-    # --- 샘플 예시 출력 ---
+    # --- Sample preview ---
     print(f"\n" + "=" * 60)
-    print(" 샘플 예시")
+    print(" Sample preview")
     print("=" * 60)
     sample = samples[0]
     print(f"\nScenario: {sample['scenario_type']} / "
           f"True: {sample['true_class']} / "
           f"Predicted: {sample['predicted_class']} / "
           f"Profile: {sample['patient_profile']}")
-    print(f"\n[User Prompt 일부]")
+    print(f"\n[User prompt excerpt]")
     user_msg = sample["messages"][1]["content"]
     print(user_msg[:600] + "...")
-    print(f"\n[Assistant Response 일부]")
+    print(f"\n[Assistant response excerpt]")
     asst_msg = sample["messages"][2]["content"]
     print(asst_msg[:500] + "...")
 
     print(f"\n" + "=" * 60)
-    print(" 생성 완료")
-    print(f"  다음 단계: python 09_gemma_lora_finetune_en.py")
+    print(" Generation complete")
+    print(f" Next step: python scripts/05_train_gemma_lora.py")
     print("=" * 60)
 
 
