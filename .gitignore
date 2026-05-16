@@ -90,3 +90,6 @@ models/rag_db/knowledge_base_guide.json
 
 # Demo validation tool (personal utility, not for public reproducibility)
 src/dermassist/evaluation/validate_demo.py
+
+# Training script (one-time use, LoRA adapter is published separately)
+src/dermassist/llm/train_lora.py

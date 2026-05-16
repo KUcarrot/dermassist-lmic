@@ -1,15 +1,19 @@
 """
-robust_json_parser.py (v2 - 강화 버전)
-======================================
-이전 버전 대비 개선 사항:
-1. 종료 펜스 없는 ```json 블록 처리 (응답 잘림 대응)
-2. reasoning 텍스트가 JSON 앞에 있는 경우 처리
-3. 응답 잘림 시 JSON 부분 복구 시도
+json_parser.py
+==============
+Robust JSON parsing for Gemma 4 LLM responses.
 
-처리 가능한 신규 케이스:
-- "...reasoning text...```json\n{...}" (종료 펜스 없음)
-- "...thinking process...{...}" (펜스 없이 JSON 시작)
-- 응답 끝이 잘린 경우 가능한 만큼 복구
+Handles common LLM output edge cases:
+1. Complete ```json {...} ``` fenced blocks
+2. Opened but unclosed ```json blocks (response truncation)
+3. Reasoning text preceding the JSON
+4. Multilingual hallucinations at the end of strings
+5. Truncated JSON recovery
+6. ABCDE double-colon formatting issues
+
+Usage:
+    from dermassist.llm.json_parser import parse_gemma_response
+    parsed = parse_gemma_response(raw_llm_output, debug=False)
 """
 
 import re
@@ -19,17 +23,17 @@ from typing import Dict, Optional
 
 def extract_json_from_response(generated: str) -> Optional[str]:
     """
-    Gemma 응답에서 JSON 부분만 추출 (강화 버전).
+    Extract the JSON portion from a Gemma response.
 
-    처리 우선순위:
-    1. 완전한 ```json {...} ``` 블록
-    2. 시작만 있는 ```json {...} (종료 펜스 없음)
-    3. reasoning 후 단순 {...}
-    4. 첫 { 부터 마지막 } 까지 (폴백)
+    Priority order:
+    1. Complete ```json {...} ``` block
+    2. Opened ```json {...} block without closing fence
+    3. Standalone JSON after reasoning text (no fences)
+    4. Fallback: first { to last }
     """
     text = generated.strip()
 
-    # 1. 완전한 ```json 블록
+    # 1. Complete ```json block
     json_fence_match = re.search(
         r"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
         text,
@@ -37,22 +41,21 @@ def extract_json_from_response(generated: str) -> Optional[str]:
     if json_fence_match:
         return json_fence_match.group(1)
 
-    # 2. 시작 펜스만 있는 경우 (종료 펜스 없음, 응답 잘림 가능)
-    # ```json 다음에 오는 모든 내용을 JSON으로 시도
+    # 2. Only opening fence (no closing fence, possibly truncated response)
+    # Attempt to parse everything after ```json as JSON
     fence_start_match = re.search(r"```(?:json)?\s*(\{[\s\S]*)$", text)
     if fence_start_match:
         candidate = fence_start_match.group(1)
-        # 마지막 ```가 있으면 제거
+        # Remove trailing ``` if present
         candidate = re.sub(r"```\s*$", "", candidate).strip()
-        # 마지막 } 찾기
+        # Find last }
         last_brace = candidate.rfind("}")
         if last_brace > 0:
             candidate = candidate[:last_brace + 1]
         return candidate
 
-    # 3. reasoning 후 단순 JSON 시작 (펜스 없음)
-    # "thinking text\n{...}" 형식
-    # 첫 번째 { 가 줄바꿈 후에 오는 패턴
+    # 3. Standalone JSON after reasoning text (no fences)
+    # Pattern: "thinking text\n{...}"
     standalone_json = re.search(
         r"(?:^|\n)\s*(\{[\s\S]*\})",
         text,
@@ -60,7 +63,7 @@ def extract_json_from_response(generated: str) -> Optional[str]:
     if standalone_json:
         return standalone_json.group(1)
 
-    # 4. 폴백: 첫 { 부터 마지막 } 까지
+    # 4. Fallback: first { to last }
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
@@ -71,24 +74,19 @@ def extract_json_from_response(generated: str) -> Optional[str]:
 
 def fix_truncated_json(json_str: str) -> Optional[str]:
     """
-    잘린 JSON을 가능한 만큼 복구.
+    Recover as much of a truncated JSON as possible.
 
-    예시:
-      Input:  '{"a": "value", "b": [1, 2'
-      Output: '{"a": "value", "b": [1, 2]}'
+    Example:
+        Input:  '{"a": "value", "b": [1, 2'
+        Output: '{"a": "value", "b": [1, 2]}'
 
-    전략:
-      1. 미완성된 마지막 키-값 쌍 제거
-      2. 미닫힌 brace/bracket 닫기
+    Strategy:
+        1. Remove incomplete trailing key-value pair
+        2. Close unclosed braces/brackets
     """
     text = json_str.strip()
 
-    # 마지막 완성된 ", " 또는 "}, "에서 자르기
-    # 가장 안전한 끝점 찾기
-    last_safe_end = -1
-
-    # ", \n  "X" : 패턴 또는 "}, \n" 패턴 찾기
-    # 즉 새 키가 시작되기 직전의 콤마 위치
+    # Find the safest endpoint
     in_string = False
     escape = False
     depth_brace = 0
@@ -112,24 +110,22 @@ def fix_truncated_json(json_str: str) -> Optional[str]:
         elif char == '}':
             depth_brace -= 1
             if depth_brace == 0:
-                # 완전히 닫힌 외부 brace
+                # Fully closed outer brace
                 return text[:i + 1]
         elif char == '[':
             depth_bracket += 1
         elif char == ']':
             depth_bracket -= 1
         elif char == ',' and depth_brace == 1 and depth_bracket == 0:
-            # 외부 객체의 키-값 구분 콤마
+            # Outer object key-value separator
             last_complete = i
 
-    # 외부 brace 닫히지 않은 경우 마지막 완성 콤마에서 자르기
+    # If outer brace is not closed, truncate at last complete comma
     if last_complete > 0:
         truncated = text[:last_complete]
-        # 미닫힌 괄호 닫기
-        # 추가 분석 필요시 자동으로
         truncated = truncated.rstrip().rstrip(',')
 
-        # 미닫힌 } 추가
+        # Close any unclosed braces/brackets
         opens = truncated.count('{') - truncated.count('}')
         closes = truncated.count('[') - truncated.count(']')
 
@@ -145,7 +141,11 @@ def fix_truncated_json(json_str: str) -> Optional[str]:
 
 def fix_abcde_double_colon(json_str: str) -> str:
     """
-    ABCDE 필드의 "Key": "Label": "Value" 형식 자동 교정.
+    Auto-correct ABCDE field "Key": "Label": "Value" formatting.
+
+    Some LLM outputs incorrectly use double colons in ABCDE fields.
+    Convert: "A": "Asymmetry": "value"
+    To:      "A": "Asymmetry: value"
     """
     pattern = r'"([A-E])"\s*:\s*"([^"]+)"\s*:\s*"([^"]+)"'
     replacement = r'"\1": "\2: \3"'
@@ -153,7 +153,7 @@ def fix_abcde_double_colon(json_str: str) -> str:
 
 
 def remove_hallucinated_multilingual(text: str) -> str:
-    """다국어 환각 제거."""
+    """Remove multilingual hallucinations from the tail of a response."""
     if len(text) < 100:
         return text
 
@@ -174,36 +174,45 @@ def remove_hallucinated_multilingual(text: str) -> str:
 
 
 def parse_gemma_response(generated: str, debug: bool = False) -> Dict:
-    """강화된 JSON 파싱."""
-    # Step 1: JSON 추출
+    """
+    Robust JSON parsing with multi-stage fallback.
+
+    Args:
+        generated: Raw LLM output string
+        debug: If True, print parsing stage information
+
+    Returns:
+        Parsed dict (or fallback response if all parsing fails)
+    """
+    # Step 1: Extract JSON
     json_str = extract_json_from_response(generated)
     if json_str is None:
         if debug:
-            print("[Parser] JSON 추출 실패")
+            print("[Parser] JSON extraction failed")
         return _fallback_response(generated)
 
-    # Step 2: 직접 파싱 시도
+    # Step 2: Try direct parsing
     try:
         result = json.loads(json_str)
         if debug:
-            print("[Parser] 직접 파싱 성공")
+            print("[Parser] Direct parsing succeeded")
         return _clean_response(result)
     except json.JSONDecodeError as e:
         if debug:
-            print(f"[Parser] 직접 파싱 실패: {e}")
+            print(f"[Parser] Direct parsing failed: {e}")
 
-    # Step 3: ABCDE double colon 교정 후 재시도
+    # Step 3: Retry after ABCDE double colon fix
     try:
         fixed = fix_abcde_double_colon(json_str)
         result = json.loads(fixed)
         if debug:
-            print("[Parser] ABCDE 교정 후 파싱 성공")
+            print("[Parser] ABCDE-fixed parsing succeeded")
         return _clean_response(result)
     except json.JSONDecodeError as e:
         if debug:
-            print(f"[Parser] ABCDE 교정 후도 실패: {e}")
+            print(f"[Parser] ABCDE-fixed parsing failed: {e}")
 
-    # Step 4: 다국어 환각 제거 후 재시도
+    # Step 4: Retry after multilingual hallucination removal
     try:
         cleaned = remove_hallucinated_multilingual(json_str)
         cleaned = fix_abcde_double_colon(cleaned)
@@ -212,41 +221,41 @@ def parse_gemma_response(generated: str, debug: bool = False) -> Dict:
             cleaned = cleaned[:last_brace + 1]
         result = json.loads(cleaned)
         if debug:
-            print("[Parser] 다국어 환각 제거 후 파싱 성공")
+            print("[Parser] Multilingual-cleaned parsing succeeded")
         return _clean_response(result)
     except json.JSONDecodeError as e:
         if debug:
-            print(f"[Parser] 다국어 제거 후도 실패: {e}")
+            print(f"[Parser] Multilingual cleanup failed: {e}")
 
-    # Step 5: NEW - 잘린 JSON 복구 시도
+    # Step 5: Truncated JSON recovery
     try:
         truncated = fix_truncated_json(json_str)
         if truncated:
             truncated = fix_abcde_double_colon(truncated)
             result = json.loads(truncated)
             if debug:
-                print("[Parser] 잘린 JSON 복구 후 파싱 성공")
+                print("[Parser] Truncated JSON recovery succeeded")
             return _clean_response(result)
     except json.JSONDecodeError as e:
         if debug:
-            print(f"[Parser] 잘린 JSON 복구도 실패: {e}")
+            print(f"[Parser] Truncated JSON recovery failed: {e}")
 
-    # Step 6: 정규식으로 핵심 필드만 강제 추출
+    # Step 6: Force-extract key fields via regex
     try:
         result = _extract_fields_by_regex(json_str)
         if result:
             if debug:
-                print("[Parser] 정규식 추출 성공")
+                print("[Parser] Regex extraction succeeded")
             return _clean_response(result)
     except Exception as e:
         if debug:
-            print(f"[Parser] 정규식 추출 실패: {e}")
+            print(f"[Parser] Regex extraction failed: {e}")
 
     return _fallback_response(generated)
 
 
 def _extract_fields_by_regex(json_str: str) -> Optional[Dict]:
-    """JSON 파싱 실패 시 정규식으로 핵심 필드 추출."""
+    """Last-resort regex extraction when JSON parsing completely fails."""
     result = {}
 
     string_fields = [
@@ -294,7 +303,7 @@ def _extract_fields_by_regex(json_str: str) -> Optional[Dict]:
 
 
 def _clean_response(response: Dict) -> Dict:
-    """응답에서 환각 제거 및 정리."""
+    """Clean response by removing hallucinations from text fields."""
     if not isinstance(response, dict):
         return response
 
@@ -310,7 +319,7 @@ def _clean_response(response: Dict) -> Dict:
 
 
 def _fallback_response(generated: str) -> Dict:
-    """파싱 실패 시 영어 폴백 응답."""
+    """English fallback response when all parsing strategies fail."""
     return {
         "observed_features": ["JSON parsing failed - see raw output"],
         "abcde_analysis": {k: "Parsing failed" for k in "ABCDE"},
@@ -333,10 +342,10 @@ def _fallback_response(generated: str) -> Dict:
 
 
 # ============================================================
-# 단위 테스트 (실제 발견된 패턴 기반)
+# Unit tests (based on patterns observed in production)
 # ============================================================
 if __name__ == "__main__":
-    # Test 1: reasoning 후 JSON (종료 펜스 없음)
+    # Test 1: ```json block without closing fence
     test1 = """The patient context is detailed but the patient summary is plain English.)```json
 {
   "observed_features": [
@@ -358,12 +367,12 @@ if __name__ == "__main__":
   "limitations": "AI screening only."
 }"""
     print("=" * 60)
-    print("Test 1: 종료 펜스 없는 ```json 블록")
+    print("Test 1: ```json block without closing fence")
     print("=" * 60)
     result1 = parse_gemma_response(test1, debug=True)
     print(f"Result: {list(result1.keys()) if 'observed_features' in result1 else 'FAILED'}\n")
 
-    # Test 2: reasoning + 잘린 JSON
+    # Test 2: reasoning + truncated JSON
     test2 = """6.  **Final JSON Generation.** (Proceeding with generating the response.)```json
 {
   "observed_features": [
@@ -373,7 +382,7 @@ if __name__ == "__main__":
   "abcde_analysis": {
     "A": "Asymmetry - Further"""
     print("=" * 60)
-    print("Test 2: reasoning + 잘린 JSON")
+    print("Test 2: reasoning + truncated JSON")
     print("=" * 60)
     result2 = parse_gemma_response(test2, debug=True)
     print(f"Result: {list(result2.keys()) if 'observed_features' in result2 else 'FAILED'}")
@@ -381,7 +390,7 @@ if __name__ == "__main__":
         print(f"  ABCDE: {result2.get('abcde_analysis')}")
     print()
 
-    # Test 3: 더 심하게 잘린 케이스 (실제 ISIC_0024800 패턴)
+    # Test 3: heavily truncated case
     test3 = """{
   "observed_features": [
     "Test feature"
@@ -389,7 +398,7 @@ if __name__ == "__main__":
   "abcde_analysis": {
     "A": "Asymmetry - Further"""
     print("=" * 60)
-    print("Test 3: 마지막 키-값 잘림")
+    print("Test 3: last key-value truncated")
     print("=" * 60)
     result3 = parse_gemma_response(test3, debug=True)
     print(f"Result: {list(result3.keys())}")
