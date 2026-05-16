@@ -1,17 +1,21 @@
 """
-prepare_bcn20000_samples.py (v2 - 실제 분포 반영)
-==================================================
-BCN20000 메타데이터에서 클래스별 샘플 추출.
+prepare_bcn20000.py
+===================
+Prepare BCN20000 evaluation samples by extracting class-balanced images
+from the raw ISIC Archive metadata.
 
-실제 분포 분석 결과 반영:
-  - vasc 클래스: BCN20000에 없음 (제외)
-  - SCC: akiec과 별개로 처리 (제외)
-  - 6개 클래스 평가: nv, mel, bcc, akiec, bkl, df
+This script applies actual BCN20000 distribution analysis:
+  - vasc class: not present in BCN20000 (excluded)
+  - SCC: treated separately from akiec (excluded, conservative approach)
+  - 6 evaluation classes: nv, mel, bcc, akiec, bkl, df
 
-출력:
-  C:/donggeun/Gemma4/data/external/bcn20000_eval/
-  ├── metadata.csv                        ← 평가용 메타데이터
-  ├── nv/, mel/, bcc/, akiec/, bkl/, df/  ← 클래스별 폴더
+Outputs (relative to project root):
+  data/external/bcn20000_eval/
+  ├── metadata.csv                          # Evaluation metadata
+  └── nv/, mel/, bcc/, akiec/, bkl/, df/    # Per-class image folders
+
+Run via:
+    python -m dermassist.evaluation.prepare_bcn20000
 """
 
 import sys
@@ -25,29 +29,37 @@ from tqdm import tqdm
 
 
 # ============================================================
-# 경로 설정 (실제 폴더 구조에 맞춤)
+# Path configuration (relative to project root)
 # ============================================================
-PROJECT_ROOT = Path(__file__).resolve().parent
+# This file is at: src/dermassist/evaluation/prepare_bcn20000.py
+# Project root is 4 levels up
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
-SOURCE_METADATA_CSV = PROJECT_ROOT / "data" / "external" / "bcn20000" / "bcn20000_metadata_2026-05-07.csv"
- 
-# 다운받은 ISIC-images 폴더 경로
-SOURCE_IMAGES_DIR = PROJECT_ROOT / "data" / "external" / "bcn20000" / "ISIC-images"
+SOURCE_METADATA_CSV = (
+    PROJECT_ROOT / "data" / "external" / "bcn20000" /
+    "bcn20000_metadata_2026-05-07.csv"
+)
 
-# 출력 경로
+# Downloaded ISIC-images folder
+SOURCE_IMAGES_DIR = (
+    PROJECT_ROOT / "data" / "external" / "bcn20000" / "ISIC-images"
+)
+
+# Output directory
 OUTPUT_DIR = PROJECT_ROOT / "data" / "external" / "bcn20000_eval"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# 클래스별 샘플 수
+# Sampling parameters
 SAMPLES_PER_CLASS = 10
 RANDOM_SEED = 42
 
 
 # ============================================================
-# 실제 BCN20000 분포 기반 매핑
+# HAM10000 to BCN20000 diagnosis mapping
 # ============================================================
-# vasc 클래스는 BCN20000에 없으므로 제외
-# SCC도 akiec과 임상적으로 다르므로 제외 (보수적 접근)
+# Notes on class exclusions:
+# - vasc: BCN20000 has insufficient vascular lesion samples
+# - SCC: clinically distinct from akiec, excluded for conservative evaluation
 HAM_TO_BCN_DIAGNOSIS = {
     "nv": [
         "Nevus",
@@ -69,12 +81,12 @@ HAM_TO_BCN_DIAGNOSIS = {
     "df": [
         "Dermatofibroma",
     ],
-    # vasc는 BCN20000에 충분한 샘플이 없어 제외
+    # vasc excluded: insufficient samples in BCN20000
 }
 
 
 def find_image_path(isic_id: str, source_dir: Path) -> Path:
-    """ISIC ID에 해당하는 이미지 파일 찾기."""
+    """Find the image file path for a given ISIC ID."""
     for ext in [".jpg", ".JPG", ".jpeg", ".JPEG", ".png"]:
         path = source_dir / f"{isic_id}{ext}"
         if path.exists():
@@ -84,44 +96,46 @@ def find_image_path(isic_id: str, source_dir: Path) -> Path:
 
 def main():
     print("=" * 60)
-    print(" BCN20000 외부 검증 샘플 준비 (v2)")
+    print(" BCN20000 External Validation Sample Preparation")
     print("=" * 60)
-    print(f" 메타데이터: {SOURCE_METADATA_CSV}")
-    print(f" 이미지 폴더: {SOURCE_IMAGES_DIR}")
-    print(f" 출력: {OUTPUT_DIR}")
+    print(f" Metadata: {SOURCE_METADATA_CSV}")
+    print(f" Image folder: {SOURCE_IMAGES_DIR}")
+    print(f" Output: {OUTPUT_DIR}")
     print("=" * 60)
 
-    # 경로 검증
+    # Path validation
     if not SOURCE_METADATA_CSV.exists():
-        print(f"\n[오류] 메타데이터 없음: {SOURCE_METADATA_CSV}")
-        print("       파일이 Gemma4 루트에 있는지 확인하세요.")
+        print(f"\n[Error] Metadata file not found: {SOURCE_METADATA_CSV}")
+        print("        Please verify the file is at the expected location.")
         sys.exit(1)
 
     if not SOURCE_IMAGES_DIR.exists():
-        print(f"\n[오류] 이미지 폴더 없음: {SOURCE_IMAGES_DIR}")
+        print(f"\n[Error] Image folder not found: {SOURCE_IMAGES_DIR}")
         sys.exit(1)
 
-    # 메타데이터 읽기
-    print("\n[1/4] 메타데이터 로드...")
+    # Load metadata
+    print("\n[1/4] Loading metadata...")
     df = pd.read_csv(SOURCE_METADATA_CSV)
-    print(f"  총 행: {len(df):,}")
-    print(f"  diagnosis_3 있음: {df['diagnosis_3'].notna().sum():,}")
+    print(f"  Total rows: {len(df):,}")
+    print(f"  Rows with diagnosis_3: {df['diagnosis_3'].notna().sum():,}")
 
-    # 이미지 폴더 검증
-    print("\n[2/4] 이미지 폴더 스캔...")
+    # Scan image folder
+    print("\n[2/4] Scanning image folder...")
     sample_images = list(SOURCE_IMAGES_DIR.glob("*.jpg"))[:5]
     if not sample_images:
         sample_images = list(SOURCE_IMAGES_DIR.glob("*.JPG"))[:5]
-    print(f"  샘플 이미지 (첫 5개):")
+    print(f"  Sample images (first 5):")
     for img in sample_images:
         print(f"    {img.name}")
 
-    total_images = len(list(SOURCE_IMAGES_DIR.glob("*.jpg"))) + \
-                   len(list(SOURCE_IMAGES_DIR.glob("*.JPG")))
-    print(f"  총 이미지: {total_images:,}장")
+    total_images = (
+        len(list(SOURCE_IMAGES_DIR.glob("*.jpg"))) +
+        len(list(SOURCE_IMAGES_DIR.glob("*.JPG")))
+    )
+    print(f"  Total images: {total_images:,}")
 
-    # 클래스별 샘플링
-    print("\n[3/4] 클래스별 샘플링 (목표: 클래스당 10장)")
+    # Per-class sampling
+    print(f"\n[3/4] Per-class sampling (target: {SAMPLES_PER_CLASS} per class)")
     random.seed(RANDOM_SEED)
 
     selected_rows = []
@@ -132,16 +146,16 @@ def main():
         candidates = df[mask].copy()
 
         candidate_count = len(candidates)
-        print(f"\n  {ham_class} ← {', '.join(bcn_diagnoses)}")
-        print(f"    매핑 후보: {candidate_count}장")
+        print(f"\n  {ham_class} <- {', '.join(bcn_diagnoses)}")
+        print(f"    Candidates after mapping: {candidate_count}")
 
         if candidate_count > 0:
             unique_diagnoses = candidates["diagnosis_3"].value_counts()
             for diag, cnt in unique_diagnoses.items():
-                print(f"      {diag}: {cnt}장")
+                print(f"      {diag}: {cnt}")
 
         if candidate_count == 0:
-            print(f"    [경고] 샘플 0장")
+            print(f"    [Warning] No samples available")
             sampling_summary[ham_class] = 0
             continue
 
@@ -150,22 +164,22 @@ def main():
         sampled["ham_class"] = ham_class
         selected_rows.append(sampled)
         sampling_summary[ham_class] = sample_n
-        print(f"    샘플링: {sample_n}장")
+        print(f"    Sampled: {sample_n}")
 
     if not selected_rows:
-        print("\n[오류] 샘플링 결과 없음")
+        print("\n[Error] No samples could be selected")
         sys.exit(1)
 
     selected_df = pd.concat(selected_rows, ignore_index=True)
-    print(f"\n  총 샘플: {len(selected_df)}장")
+    print(f"\n  Total samples: {len(selected_df)}")
 
-    # 이미지 복사
-    print(f"\n[4/4] 이미지 복사")
+    # Copy images
+    print(f"\n[4/4] Copying images")
 
     eval_records = []
     missing_images = []
 
-    for _, row in tqdm(selected_df.iterrows(), total=len(selected_df), desc="복사"):
+    for _, row in tqdm(selected_df.iterrows(), total=len(selected_df), desc="Copying"):
         ham_class = row["ham_class"]
         isic_id = row["isic_id"]
 
@@ -199,34 +213,34 @@ def main():
     metadata_path = OUTPUT_DIR / "metadata.csv"
     eval_df.to_csv(metadata_path, index=False, encoding="utf-8")
 
-    # 요약
+    # Summary
     print("\n" + "=" * 60)
-    print(" 샘플 준비 완료")
+    print(" Sample preparation complete")
     print("=" * 60)
-    print(f"  메타데이터: {metadata_path}")
-    print(f"  이미지 폴더: {OUTPUT_DIR}")
+    print(f"  Metadata: {metadata_path}")
+    print(f"  Image folder: {OUTPUT_DIR}")
     if missing_images:
-        print(f"  [경고] 누락 이미지 {len(missing_images)}장:")
+        print(f"  [Warning] {len(missing_images)} images not found:")
         for mid in missing_images[:5]:
             print(f"    - {mid}")
         if len(missing_images) > 5:
-            print(f"    ... 외 {len(missing_images) - 5}장")
+            print(f"    ... and {len(missing_images) - 5} more")
     print()
 
-    print(f"  클래스별 샘플:")
+    print(f"  Per-class samples:")
     for ham_class in HAM_TO_BCN_DIAGNOSIS:
         actual_count = len(eval_df[eval_df["ham_class"] == ham_class])
         target = SAMPLES_PER_CLASS
-        status = "OK" if actual_count == target else "부족"
-        print(f"    [{status}] {ham_class}: {actual_count}/{target}장")
+        status = "OK" if actual_count == target else "SHORT"
+        print(f"    [{status}] {ham_class}: {actual_count}/{target}")
 
-    print(f"\n  총 평가 대상: {len(eval_df)}장")
-    print(f"  예상 평가 시간: 약 {len(eval_df) * 65 / 60:.0f}분")
+    print(f"\n  Total evaluation samples: {len(eval_df)}")
+    print(f"  Estimated evaluation time: ~{len(eval_df) * 65 / 60:.0f} minutes")
     print()
-    print(f"  다음 단계: python test_batch_external_bcn20000.py")
-    print(f"\n[참고]")
-    print(f"  vasc 클래스는 BCN20000에 충분한 샘플이 없어 제외했습니다.")
-    print(f"  SCC도 akiec과 임상적 차이가 있어 제외했습니다 (보수적 평가).")
+    print(f"  Next step: python scripts/08_evaluate_bcn20000.py")
+    print(f"\n[Notes]")
+    print(f"  vasc class excluded: insufficient samples in BCN20000.")
+    print(f"  SCC excluded: clinically distinct from akiec (conservative evaluation).")
 
 
 if __name__ == "__main__":
