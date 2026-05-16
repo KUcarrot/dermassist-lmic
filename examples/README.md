@@ -97,7 +97,6 @@ Sci. Data 5, 180161 (2018). https://doi.org/10.1038/sdata.2018.161
 ## Notes for Demo Reproducibility
 
 - **Greedy decoding:** The Gemma 4 inference uses `do_sample=False`, so outputs are deterministic for the same input.
-- **Vision Classifier:** Uses `best_baseline.pth` or `best_with_synthetic.pth`. Refer to the main README for model download instructions.
 - **First run latency:** Initial model loading takes 30-60 seconds. Subsequent inferences run in approximately 60 seconds per case.
 
 For the full pipeline architecture, see the main [README.md](../README.md) at the project root.
