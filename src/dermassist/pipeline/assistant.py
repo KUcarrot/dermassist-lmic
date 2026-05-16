@@ -3,8 +3,8 @@ Skin Lesion Assistant - Integrated Pipeline
 ============================================
 Vision Classifier + RAG + Gemma 4 LoRA inference pipeline.
 
-이 파일은 src/dermassist/pipeline/assistant.py에 위치합니다.
-프로젝트 루트는 4단계 위입니다.
+This file is located at src/dermassist/pipeline/assistant.py.
+Project root is 4 levels up.
 """
 
 import os
@@ -13,16 +13,16 @@ from pathlib import Path
 
 
 # ============================================================
-# 1. 프로젝트 .venv 자동 활성화 (개발 편의용)
+# 1. Auto-activate project .venv (developer convenience)
 # ============================================================
 def _ensure_project_venv() -> None:
     """
-    프로젝트의 .venv 인터프리터가 아니면 동일 스크립트를 .venv Python으로 재실행.
-    
-    새 모듈 구조: src/dermassist/pipeline/assistant.py
-    프로젝트 루트: 4단계 위 (parent.parent.parent.parent)
+    Re-execute the script with the project's .venv Python if not already active.
+
+    Module structure: src/dermassist/pipeline/assistant.py
+    Project root: 4 levels up (parent.parent.parent.parent)
     """
-    # src/dermassist/pipeline/assistant.py → 프로젝트 루트
+    # src/dermassist/pipeline/assistant.py -> project root
     project_root = Path(__file__).resolve().parent.parent.parent.parent
 
     if sys.platform == "win32":
@@ -43,13 +43,13 @@ def _ensure_project_venv() -> None:
     os.execv(str(venv_python), [str(venv_python), script_path, *sys.argv[1:]])
 
 
-# 직접 실행 시에만 자동 활성화 (import될 때는 건너뜀)
+# Auto-activate only on direct execution (skip when imported)
 if __name__ == "__main__":
     _ensure_project_venv()
 
 
 # ============================================================
-# 2. 표준 라이브러리 imports
+# 2. Standard library imports
 # ============================================================
 import re
 import json
@@ -59,7 +59,7 @@ from dataclasses import dataclass, asdict
 
 
 # ============================================================
-# 3. 외부 라이브러리 imports
+# 3. Third-party imports
 # ============================================================
 import numpy as np
 import torch
@@ -68,39 +68,26 @@ from PIL import Image
 
 
 # ============================================================
-# 4. 프로젝트 내부 imports
+# 4. Project-internal imports
 # ============================================================
-# robust_json_parser: 같은 패키지 내 llm 모듈
+# JSON parser: same-package llm module
 from dermassist.llm.json_parser import parse_gemma_response
 
-# configs.config: 프로젝트 루트의 configs/ 디렉터리
-# (pip install -e . 으로 설치된 환경에서는 configs/__init__.py 필요)
-try:
-    from configs.config import (
-        PROCESSED_DIR, SPLIT_DIR, VISION_MODEL_DIR, RAG_DB_DIR,
-        GEMMA_MODEL_DIR, OUTPUT_DIR,
-        CLASS_NAMES, MALIGNANT_CLASSES, IMAGE_SIZE,
-        VISION_CONFIG, GEMMA_CONFIG, RAG_CONFIG,
-        NORMALIZATION_MEAN, NORMALIZATION_STD,
-        CONFIDENCE_THRESHOLD, ESCALATION_MESSAGE,
-    )
-except ImportError:
-    # configs를 import 못하면 프로젝트 루트를 sys.path에 추가하고 재시도
-    _project_root = Path(__file__).resolve().parent.parent.parent.parent
-    if str(_project_root) not in sys.path:
-        sys.path.insert(0, str(_project_root))
-    from configs.config import (
-        PROCESSED_DIR, SPLIT_DIR, VISION_MODEL_DIR, RAG_DB_DIR,
-        GEMMA_MODEL_DIR, OUTPUT_DIR,
-        CLASS_NAMES, MALIGNANT_CLASSES, IMAGE_SIZE,
-        VISION_CONFIG, GEMMA_CONFIG, RAG_CONFIG,
-        NORMALIZATION_MEAN, NORMALIZATION_STD,
-        CONFIDENCE_THRESHOLD, ESCALATION_MESSAGE,
-    )
+# configs.config: configs/ directory at project root
+# (requires configs/__init__.py when installed via pip install -e .)
+
+from configs.config import (
+    PROCESSED_DIR, SPLIT_DIR, VISION_MODEL_DIR, RAG_DB_DIR,
+    GEMMA_MODEL_DIR, OUTPUT_DIR,
+    CLASS_NAMES, MALIGNANT_CLASSES, IMAGE_SIZE,
+    VISION_CONFIG, GEMMA_CONFIG, RAG_CONFIG,
+    NORMALIZATION_MEAN, NORMALIZATION_STD,
+    CONFIDENCE_THRESHOLD, ESCALATION_MESSAGE,
+)
 
 
 # ============================================================
-# SYSTEM PROMPT (학습 데이터 07_gemma_training_data_gen_en.py와 정확히 동일)
+# SYSTEM PROMPT (matches training data exactly)
 # ============================================================
 SYSTEM_PROMPT_EN = """You are a skin lesion screening assistant designed for community health workers in low-resource settings, particularly rural areas of sub-Saharan Africa and other LMICs (Low- and Middle-Income Countries) where dermatologist density is below 1 per million population.
 
@@ -137,7 +124,7 @@ Output format: Strictly valid JSON with the following fields:
 
 
 # ============================================================
-# Grad-CAM 영어 서술 템플릿 (학습 데이터와 일치)
+# Grad-CAM English description templates (match training data)
 # ============================================================
 GRAD_CAM_TEMPLATES_EN = {
     "mel": [
@@ -193,12 +180,12 @@ GRAD_CAM_TEMPLATES_EN = {
 
 
 # ============================================================
-# 1. 환자 메타데이터 스키마 (LMIC 확장)
+# 1. Patient metadata schema (with LMIC extensions)
 # ============================================================
 @dataclass
 class PatientMetadata:
-    """환자 컨텍스트 정보 (LMIC 필드 포함)."""
-    # 기본 필드
+    """Patient context information (includes LMIC-specific fields)."""
+    # Standard fields
     age: Optional[int] = None
     sex: Optional[str] = None
     body_site: Optional[str] = None
@@ -206,7 +193,7 @@ class PatientMetadata:
     symptoms: Optional[str] = None
     family_history: Optional[str] = None
 
-    # LMIC 확장 필드 (학습 데이터와 동일한 형식)
+    # LMIC extension fields (matches training data format)
     context: str = "general LMIC patient"
     risk_factor: str = "limited healthcare access"
     skin_type: str = "unspecified"
@@ -216,10 +203,10 @@ class PatientMetadata:
 
 
 # ============================================================
-# 2. Vision Classifier 래퍼
+# 2. Vision Classifier wrapper
 # ============================================================
 class VisionClassifier:
-    """EfficientNet-B4 분류기 + Grad-CAM 생성."""
+    """EfficientNet-B4 classifier with Grad-CAM generation."""
 
     def __init__(self, ckpt_path: Path, device: torch.device):
         import timm
@@ -234,7 +221,7 @@ class VisionClassifier:
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.model = self.model.to(device).eval()
 
-        # 전처리 파이프라인
+        # Preprocessing pipeline
         norm_path = SPLIT_DIR / "normalization_stats.json"
         if norm_path.exists():
             norm_stats = json.load(open(norm_path))
@@ -248,14 +235,14 @@ class VisionClassifier:
             T.Normalize(mean=mean, std=std),
         ])
 
-        # Grad-CAM hook 등록
+        # Register Grad-CAM hooks
         self._gradients = None
         self._activations = None
         target = self.model.conv_head
         target.register_forward_hook(self._save_activation)
         target.register_full_backward_hook(self._save_gradient)
 
-        print(f"[Vision] 로드 완료 (mode: {ckpt.get('mode', 'unknown')})")
+        print(f"[Vision] Loaded (mode: {ckpt.get('mode', 'unknown')})")
 
     def _save_activation(self, m, i, o):
         self._activations = o.detach()
@@ -266,49 +253,49 @@ class VisionClassifier:
     def _generate_gradcam_description(
         self, cam: np.ndarray, pred_class: str
     ) -> str:
-        """예측 클래스 + Grad-CAM 분석 결과 → 영어 서술."""
+        """Generate English Grad-CAM description from predicted class + activation map."""
         import random
 
         h, w = cam.shape
 
-        # 대칭성 측정
+        # Compute symmetry
         left_sum = cam[:, :w//2].sum()
         right_sum = cam[:, w//2:].sum()
         symmetry_ratio = (
             min(left_sum, right_sum) / (max(left_sum, right_sum) + 1e-8)
         )
 
-        # 클래스별 영어 템플릿 (학습 데이터와 일치)
+        # Per-class English templates (match training data)
         templates = GRAD_CAM_TEMPLATES_EN.get(pred_class)
         if not templates:
             return "Activation distributed across the lesion area"
 
-        # 대칭성 기반 템플릿 선택
+        # Select template based on symmetry
         if pred_class == "nv":
-            # nv는 대칭/균일 패턴 우선
+            # nv: prefer symmetric/uniform patterns
             if symmetry_ratio > 0.8:
                 desc = templates[0]  # symmetric central activation
             else:
                 desc = templates[1]  # even distribution
         elif pred_class == "mel":
-            # mel은 비대칭 패턴 우선
+            # mel: prefer asymmetric patterns
             if symmetry_ratio < 0.7:
                 desc = templates[0]  # asymmetric pattern
             else:
                 desc = templates[1]  # heterogeneous distribution
         elif pred_class == "bcc":
-            # bcc는 가장자리 활성화 우선
+            # bcc: prefer edge-activation patterns
             desc = templates[0]
         elif pred_class == "akiec":
             desc = templates[0]
         else:
-            # 기타 클래스는 첫 템플릿 사용 (일관성)
+            # Other classes: use first template (consistency)
             desc = templates[0]
 
         return desc
 
     def predict(self, image: Image.Image) -> Dict:
-        """이미지 분류 + 영어 Grad-CAM 설명 생성."""
+        """Classify image and generate English Grad-CAM description."""
         import cv2
 
         image_rgb = image.convert("RGB")
@@ -325,14 +312,14 @@ class VisionClassifier:
         pred_class = CLASS_NAMES[pred_idx]
         pred_prob = probs[pred_idx].item()
 
-        # Top-3
+        # Top-3 predictions
         top3_idx = probs.topk(3).indices.cpu().numpy()
         top3 = [
             {CLASS_NAMES[i]: round(probs[i].item(), 4)}
             for i in top3_idx
         ]
 
-        # Grad-CAM 생성
+        # Generate Grad-CAM
         output[0, pred_idx].backward()
         weights = self._gradients.mean(dim=(2, 3), keepdim=True)
         cam = (weights * self._activations).sum(dim=1).squeeze()
@@ -354,10 +341,10 @@ class VisionClassifier:
 
 
 # ============================================================
-# 3. RAG 검색 래퍼 (영어 쿼리)
+# 3. RAG retrieval wrapper (English queries)
 # ============================================================
 class RAGRetriever:
-    """bge-m3 임베딩 기반 의료 지식 검색 (영어)."""
+    """bge-m3 embedding-based medical knowledge retrieval (English)."""
 
     def __init__(self, db_path: Path, embedding_model: str = "BAAI/bge-m3"):
         import sqlite3
@@ -365,19 +352,19 @@ class RAGRetriever:
 
         self.db_path = db_path
         if not db_path.exists():
-            print(f"[경고] RAG DB 없음: {db_path}")
+            print(f"[Warning] RAG DB not found: {db_path}")
             self.model = None
             return
 
-        print(f"[RAG] 임베딩 모델 로드: {embedding_model}")
+        print(f"[RAG] Loading embedding model: {embedding_model}")
         self.model = SentenceTransformer(embedding_model)
-        print(f"  차원: {self.model.get_sentence_embedding_dimension()}")
+        print(f"  Dimension: {self.model.get_sentence_embedding_dimension()}")
 
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        print(f"[RAG] DB 연결: {db_path}")
+        print(f"[RAG] DB connected: {db_path}")
 
     def search(self, query: str, top_k: int = 5) -> List[Dict]:
-        """영어 쿼리 → 임베딩 → top-k 검색."""
+        """English query -> embedding -> top-k retrieval."""
         if self.model is None:
             return []
 
@@ -415,8 +402,8 @@ class RAGRetriever:
         return results
 
     def build_context(self, classifier_output: Dict, top_k: int = 5) -> str:
-        """예측 클래스 + Grad-CAM으로 영어 RAG 쿼리 빌드."""
-        # 영어 쿼리 (한국어 → 영어 변경)
+        """Build English RAG query from predicted class + Grad-CAM."""
+        # English query
         query = (
             f"{classifier_output['predicted_class']} skin lesion "
             f"clinical features diagnosis dermoscopy "
@@ -427,7 +414,7 @@ class RAGRetriever:
         if not results:
             return "(No reference material available)"
 
-        # 컨텍스트 조립 (영어)
+        # Assemble context (English)
         context_parts = []
         for i, r in enumerate(results, 1):
             context_parts.append(
@@ -437,10 +424,10 @@ class RAGRetriever:
 
 
 # ============================================================
-# 4. Gemma LoRA 추론 래퍼 (영어)
+# 4. Gemma LoRA inference wrapper (English)
 # ============================================================
 class GemmaInference:
-    """Gemma 4 E4B + LoRA 어댑터로 영어 의료 보조 응답 생성."""
+    """Generate English medical assistant responses via Gemma 4 E4B + LoRA adapter."""
 
     def __init__(
         self,
@@ -451,7 +438,7 @@ class GemmaInference:
         from transformers import AutoProcessor, AutoModelForCausalLM, BitsAndBytesConfig
         from peft import PeftModel
 
-        print(f"[Gemma] 베이스 모델 로드: {base_model_id}")
+        print(f"[Gemma] Loading base model: {base_model_id}")
 
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -475,14 +462,14 @@ class GemmaInference:
             dtype=torch.bfloat16,
         )
 
-        # LoRA 어댑터 로드
+        # Load LoRA adapter
         if lora_adapter_dir.exists():
-            print(f"[Gemma] LoRA 어댑터 로드: {lora_adapter_dir}")
+            print(f"[Gemma] Loading LoRA adapter: {lora_adapter_dir}")
             self.model = PeftModel.from_pretrained(
                 self.base_model, str(lora_adapter_dir),
             )
         else:
-            print(f"[경고] LoRA 어댑터 없음 — 베이스 모델로 추론")
+            print(f"[Warning] LoRA adapter not found - using base model")
             self.model = self.base_model
 
         self.model.eval()
@@ -493,7 +480,7 @@ class GemmaInference:
         patient_meta: PatientMetadata,
         rag_context: str,
     ) -> str:
-        """학습 데이터 형식과 일치하는 영어 user prompt 빌드."""
+        """Build English user prompt matching training data format."""
         top3_str = ", ".join(
             f"{list(d.keys())[0]}: {list(d.values())[0]:.1%}"
             for d in classifier_output["top3"]
@@ -573,15 +560,15 @@ class GemmaInference:
         classifier_output: Dict,
         patient_meta: PatientMetadata,
         rag_context: str,
-        max_new_tokens: int = 1500, # 800
+        max_new_tokens: int = 1500,
     ) -> Dict:
-        """영어 LMIC 형식의 구조화된 의료 보조 응답 생성."""
-        # User prompt 빌드 (학습 데이터 형식과 일치)
+        """Generate structured English LMIC medical assistant response."""
+        # Build user prompt (matches training data format)
         user_prompt = self._build_user_prompt(
             classifier_output, patient_meta, rag_context,
         )
 
-        # Chat template (학습과 동일하게 system role 네이티브 사용)
+        # Chat template (native system role, matches training)
         chat = [
             {"role": "system", "content": SYSTEM_PROMPT_EN},
             {"role": "user", "content": user_prompt},
@@ -593,7 +580,7 @@ class GemmaInference:
             enable_thinking=False,
         )
 
-        # 생성 (greedy decoding으로 결정적)
+        # Generate (greedy decoding for determinism)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
             outputs = self.model.generate(
@@ -610,15 +597,16 @@ class GemmaInference:
             skip_special_tokens=True,
         )
 
-        # 강화된 JSON 파싱 (마크다운 펜스, ABCDE double colon, 다국어 환각 자동 처리)
+        # Robust JSON parsing (handles markdown fences, ABCDE double colon,
+        # multilingual hallucinations automatically)
         return parse_gemma_response(generated, debug=False)
 
 
 # ============================================================
-# 5. 영어 일관성 검증 및 환각 교정
+# 5. English consistency validation and hallucination correction
 # ============================================================
 def clean_observed_features(features):
-    """observed_features에서 abcde_analysis 중복 노출 제거."""
+    """Remove ABCDE analysis duplicates from observed_features."""
     if not isinstance(features, list):
         return features
 
@@ -635,12 +623,13 @@ def clean_observed_features(features):
 
     return cleaned if cleaned else ["Vision Classifier output processed"]
 
+
 def validate_and_correct_response_en(
     response: Dict, classifier_output: Dict,
 ) -> Dict:
     """
-    영어 응답의 Vision 분류 일관성 검증 및 환각 자동 교정.
-    학습 데이터의 영어 형식에 맞춰 검출/교정.
+    Validate Vision classification consistency and auto-correct hallucinations
+    in English responses. Detection/correction matches the English training format.
     """
     is_malignant = classifier_output["is_malignant"]
     confidence = classifier_output["probability"]
@@ -653,17 +642,16 @@ def validate_and_correct_response_en(
             response["observed_features"]
         )
 
-
-    # === 1. urgency 일관성 검증 ===
+    # === 1. Urgency consistency check ===
     if not is_malignant and confidence >= 0.70:
-        # 양성 고신뢰도 → urgent 다운그레이드
+        # Benign high-confidence -> downgrade urgent
         if response.get("urgency") == "urgent":
             response["urgency"] = "routine"
             correction_log.append(
                 "urgency downgraded: benign high-confidence"
             )
 
-        # patient_summary에서 악성 암시 표현 제거 (영어)
+        # Remove malignancy-implying language from patient_summary (English)
         summary = response.get("patient_summary", "")
         malignant_indicators = [
             "high malignancy",
@@ -691,14 +679,14 @@ def validate_and_correct_response_en(
             )
 
     elif is_malignant and confidence >= 0.70:
-        # 악성 고신뢰도 → routine 업그레이드
+        # Malignant high-confidence -> upgrade routine
         if response.get("urgency") == "routine":
             response["urgency"] = "soon"
             correction_log.append("urgency upgraded: malignant")
 
-    # === 2. 환각 검출 및 자동 교정 ===
+    # === 2. Hallucination detection and auto-correction ===
     contradiction_patterns = [
-        # 자체 모순 표현
+        # Self-contradictory expressions
         (r"\bBCC\s+benign\s+form\b", "benign lesion"),
         (
             r"benign\s+form\s+of\s+(BCC|melanoma|carcinoma)",
@@ -709,25 +697,25 @@ def validate_and_correct_response_en(
             r"malignant\s+(form|type)\s+of\s+(nevus|nv|seborrheic)",
             "atypical lesion",
         ),
-        # 영문 의학 용어 대문자 표기 (한국어 환각의 영어 버전)
+        # All-caps medical terms (English equivalent of Korean hallucination)
         (r"\bBASAL CELL CARCINOMA\b", "basal cell carcinoma"),
         (r"\bSQUAMOUS CELL CARCINOMA\b", "squamous cell carcinoma"),
         (r"\bMELANOMA\b(?!\s*:)", "melanoma"),
 
-        # 추가: 가짜 URL 환각
+        # Fake URL hallucinations
         (r"\bAI://[\w\-\.]+", "(contact local health center)"),
         (r"\bdoctor://[\w\-\.]+", "(contact local health center)"),
         (r"\bvia://[\w\-\.]+", ""),
 
-        # 추가: 토큰 결합 환각
+        # Token-concatenation hallucinations
         (r"\bSpecialleistialongvised\b", "Specialist supervised"),
         (r"\bSpecial(?:leist|liest)ial\w*\b", "Specialist"),
 
-        # 추가: 잘못된 진단명
+        # Incorrect diagnostic terms
         (r"\bnailfold\s+dystrophy\s*\(nv\)", "benign nevus (nv)"),
         (r"\bFingernail\s+melanoma", "nevus"),
 
-        # 추가: 마크다운 펜스 잔존
+        # Residual markdown fences
         (r"```json\s*", ""),
         (r"```\s*$", ""),
     ]
@@ -745,11 +733,11 @@ def validate_and_correct_response_en(
         original = text
         for pattern, replacement in contradiction_patterns:
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
-        
-        # 비-라틴 문자 제거 (한국어/일본어/벵골어 환각)
-        text = re.sub(r"[\u3131-\uD79D\uAC00-\uD7A3]+", "", text)  # 한글
-        text = re.sub(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]+", "", text)  # 일본어
-        text = re.sub(r"[\u0980-\u09FF]+", "", text)  # 벵골어
+
+        # Remove non-Latin character hallucinations (Korean/Japanese/Bengali)
+        text = re.sub(r"[\u3131-\uD79D\uAC00-\uD7A3]+", "", text)  # Korean
+        text = re.sub(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]+", "", text)  # Japanese
+        text = re.sub(r"[\u0980-\u09FF]+", "", text)  # Bengali
 
         text = text.strip()
 
@@ -757,12 +745,12 @@ def validate_and_correct_response_en(
             correction_count += 1
         return text
 
-    # 텍스트 필드 교정
+    # Clean text fields
     for field in text_fields:
         if field in response and isinstance(response[field], str):
             response[field] = clean_text(response[field])
 
-    # 리스트 필드 교정
+    # Clean list fields
     for field in list_fields:
         if field in response and isinstance(response[field], list):
             response[field] = [
@@ -770,7 +758,7 @@ def validate_and_correct_response_en(
                 for item in response[field]
             ]
 
-    # ABCDE 필드 교정
+    # Clean ABCDE fields
     if "abcde_analysis" in response and isinstance(response["abcde_analysis"], dict):
         for key, value in response["abcde_analysis"].items():
             if isinstance(value, str):
@@ -781,7 +769,7 @@ def validate_and_correct_response_en(
             f"hallucination corrections: {correction_count}"
         )
 
-    # === 3. 필수 필드 보강 ===
+    # === 3. Fill in required fields ===
     required_fields = {
         "observed_features": ["No features extracted"],
         "abcde_analysis": {k: "Inconclusive" for k in "ABCDE"},
@@ -806,13 +794,13 @@ def validate_and_correct_response_en(
             response[field] = default
             correction_log.append(f"added missing field: {field}")
 
-    # === 4. urgency 값 검증 ===
+    # === 4. Urgency value validation ===
     valid_urgency = ["routine", "soon", "urgent"]
     if response.get("urgency") not in valid_urgency:
         response["urgency"] = "soon"
         correction_log.append("invalid urgency value reset")
 
-    # 교정 로그 기록 (디버깅용)
+    # Record correction log (for debugging)
     if correction_log:
         response["_correction_applied"] = " | ".join(correction_log)
 
@@ -820,10 +808,10 @@ def validate_and_correct_response_en(
 
 
 # ============================================================
-# 6. 통합 파이프라인
+# 6. Integrated pipeline
 # ============================================================
 class SkinLesionAssistant:
-    """End-to-End 영어 LMIC 추론 파이프라인."""
+    """End-to-end English LMIC inference pipeline."""
 
     def __init__(
         self,
@@ -836,55 +824,55 @@ class SkinLesionAssistant:
         self.device = device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
         )
-        print(f"[초기화] 디바이스: {self.device}")
+        print(f"[Init] Device: {self.device}")
 
-        print("\n[1/3] Vision Classifier 로드...")
+        print("\n[1/3] Loading Vision Classifier...")
         self.vision = VisionClassifier(vision_ckpt, self.device)
 
-        print("\n[2/3] RAG Retriever 로드...")
+        print("\n[2/3] Loading RAG Retriever...")
         self.rag = RAGRetriever(rag_db, embedding_model="BAAI/bge-m3")
 
-        print("\n[3/3] Gemma 추론 엔진 로드...")
+        print("\n[3/3] Loading Gemma inference engine...")
         self.gemma = GemmaInference(gemma_base, lora_adapter, self.device)
 
-        print("\n[완료] 파이프라인 준비 완료")
+        print("\n[Ready] Pipeline initialized")
 
     def analyze(
         self,
         image_path: Path,
         patient_meta: Optional[PatientMetadata] = None,
     ) -> Dict:
-        """단일 이미지 분석 → 전체 파이프라인 실행."""
+        """Analyze single image through the full pipeline."""
         patient_meta = patient_meta or PatientMetadata()
 
-        # Step 1: 이미지 로드
+        # Step 1: Load image
         image = Image.open(image_path).convert("RGB")
 
-        # Step 2: Vision Classification
+        # Step 2: Vision classification
         clf_output = self.vision.predict(image)
         print(f"\n[Classification] {clf_output['predicted_class']} "
               f"({clf_output['probability']:.1%})")
 
-        # Step 3: Confidence Gate
+        # Step 3: Confidence gate
         if clf_output["probability"] < CONFIDENCE_THRESHOLD:
             print(f"[Confidence Gate] Confidence {clf_output['probability']:.1%} < "
                   f"threshold {CONFIDENCE_THRESHOLD:.0%}")
-            print("  → Recommending specialist review")
+            print("  -> Recommending specialist review")
 
-        # Step 4: RAG 검색 (영어)
+        # Step 4: RAG retrieval (English)
         rag_context = self.rag.build_context(clf_output, top_k=5)
         print(f"[RAG] Context length: {len(rag_context)} chars")
 
-        # Step 5: Gemma 응답 생성 (영어)
+        # Step 5: Gemma response generation (English)
         print("[Gemma] Generating response...")
         response = self.gemma.generate(clf_output, patient_meta, rag_context)
 
-        # Step 6: 영어 일관성 검증
+        # Step 6: English consistency validation
         response = validate_and_correct_response_en(response, clf_output)
         if "_correction_applied" in response:
             print(f"[Validation] Corrections: {response['_correction_applied']}")
 
-        # 최종 결과 패키징
+        # Package final result
         result = {
             "input": {
                 "image_path": str(image_path),
@@ -892,7 +880,7 @@ class SkinLesionAssistant:
             },
             "classifier_output": {
                 k: v for k, v in clf_output.items()
-                if k != "grad_cam_map"  # numpy 배열 제외
+                if k != "grad_cam_map"  # Exclude numpy array
             },
             "rag_sources_used": len(rag_context) > 20,
             "response": response,
@@ -902,15 +890,15 @@ class SkinLesionAssistant:
 
 
 # ============================================================
-# 7. CLI 실행
+# 7. CLI execution
 # ============================================================
 def parse_args():
     parser = argparse.ArgumentParser(
         description="LMIC Skin Lesion Screening Assistant"
     )
-    parser.add_argument("--image", type=str, required=True, help="이미지 경로")
+    parser.add_argument("--image", type=str, required=True, help="Image path")
 
-    # 기본 환자 정보
+    # Basic patient information
     parser.add_argument("--age", type=int, default=None)
     parser.add_argument(
         "--sex", type=str, default=None, choices=["male", "female"]
@@ -926,7 +914,7 @@ def parse_args():
     )
     parser.add_argument("--family_history", type=str, default=None)
 
-    # LMIC 추가 필드
+    # LMIC extension fields
     parser.add_argument(
         "--context", type=str, default="general LMIC patient",
         help=(
@@ -951,7 +939,7 @@ def parse_args():
         help="Healthcare resource limitation",
     )
 
-    # 모델 옵션
+    # Model options
     parser.add_argument(
         "--use_baseline", action="store_true",
         help="Use baseline Vision model instead of with_synthetic",
@@ -972,33 +960,33 @@ def main():
 
     image_path = Path(args.image)
     if not image_path.exists():
-        print(f"[오류] 이미지 없음: {image_path}")
+        print(f"[Error] Image not found: {image_path}")
         sys.exit(1)
 
-    # Vision 모델 경로
+    # Vision model path
     if args.use_baseline:
         vision_ckpt = VISION_MODEL_DIR / "best_baseline.pth"
     else:
         vision_ckpt = VISION_MODEL_DIR / "best_with_synthetic.pth"
         if not vision_ckpt.exists():
             vision_ckpt = VISION_MODEL_DIR / "best_baseline.pth"
-            print(f"[알림] with_synthetic 없음 → baseline 사용")
+            print(f"[Info] with_synthetic not found - using baseline")
 
-    # LoRA 어댑터 경로 (영어 LMIC 버전 우선)
+    # LoRA adapter path (English LMIC version preferred)
     rag_db = RAG_DB_DIR / "medical_knowledge.db"
     if args.use_korean_lora:
         lora_adapter = GEMMA_MODEL_DIR / "lora_adapter" / "final_adapter"
-        print("[알림] 한국어 LoRA 어댑터 사용 (legacy)")
+        print("[Info] Using Korean LoRA adapter (legacy)")
     else:
         lora_adapter = GEMMA_MODEL_DIR / "lora_adapter_en" / "final_adapter"
         if not lora_adapter.exists():
-            print(f"[경고] 영어 LoRA 어댑터 없음: {lora_adapter}")
-            print(f"  → 한국어 어댑터로 폴백 (응답 품질 저하 가능)")
+            print(f"[Warning] English LoRA adapter not found: {lora_adapter}")
+            print(f"  -> Falling back to Korean adapter (response quality may degrade)")
             lora_adapter = GEMMA_MODEL_DIR / "lora_adapter" / "final_adapter"
 
-    # 파이프라인 실행
+    # Run pipeline
     print("=" * 60)
-    print(" Skin Lesion Assistant — LMIC English Pipeline")
+    print(" Skin Lesion Assistant - LMIC English Pipeline")
     print(" Target: Sub-Saharan Africa & Other LMICs")
     print("=" * 60)
 
@@ -1009,7 +997,7 @@ def main():
         lora_adapter=lora_adapter,
     )
 
-    # 환자 정보 구성 (LMIC 필드 포함)
+    # Compose patient information (with LMIC fields)
     patient_meta = PatientMetadata(
         age=args.age,
         sex=args.sex,
@@ -1023,20 +1011,20 @@ def main():
         resource_constraint=args.resource_constraint,
     )
 
-    # 분석 실행
+    # Run analysis
     print("\n" + "=" * 60)
     print(f" Image Analysis: {image_path.name}")
     print("=" * 60)
 
     result = assistant.analyze(image_path, patient_meta)
 
-    # 결과 출력
+    # Print result
     print("\n" + "=" * 60)
     print(" Final Result")
     print("=" * 60)
     print(json.dumps(result["response"], ensure_ascii=False, indent=2))
 
-    # 저장
+    # Save
     if args.output:
         output_path = Path(args.output)
     else:
