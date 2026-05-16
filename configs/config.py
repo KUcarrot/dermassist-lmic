@@ -1,67 +1,70 @@
 """
 configs/config.py
 =================
-프로젝트 전역 설정값.
-모든 스크립트가 이 파일을 import하여 경로·하이퍼파라미터를 일관되게 사용.
+Global configuration for the DermAssist LMIC project.
+
+All scripts import this file to ensure consistent paths and hyperparameters
+across the pipeline (data preprocessing, vision training, RAG construction,
+Gemma 4 fine-tuning, and inference).
 """
 
 from pathlib import Path
 
 # ============================================================
-# 1. 경로 설정
+# 1. Path configuration
 # ============================================================
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
-RAW_DIR = DATA_DIR / "raw"                    # 원본 데이터셋
-PROCESSED_DIR = DATA_DIR / "processed"        # 전처리 완료 데이터
-SYNTHETIC_DIR = DATA_DIR / "synthetic"        # 합성 데이터
-RAG_DIR = DATA_DIR / "rag_knowledge"          # RAG 지식베이스 원본 텍스트
-SPLIT_DIR = DATA_DIR / "splits"              # train/val/test 분할 CSV
+RAW_DIR = DATA_DIR / "raw"                    # Original raw datasets
+PROCESSED_DIR = DATA_DIR / "processed"        # Preprocessed datasets
+SYNTHETIC_DIR = DATA_DIR / "synthetic"        # Synthetic augmentation data
+RAG_DIR = DATA_DIR / "rag_knowledge"          # Raw text sources for RAG
+SPLIT_DIR = DATA_DIR / "splits"               # train/val/test split CSVs
 
 MODEL_DIR = PROJECT_ROOT / "models"
-VISION_MODEL_DIR = MODEL_DIR / "vision"       # EfficientNet 체크포인트
-GEMMA_MODEL_DIR = MODEL_DIR / "gemma"         # LoRA 어댑터
-RAG_DB_DIR = MODEL_DIR / "rag_db"            # 벡터 DB 파일
+VISION_MODEL_DIR = MODEL_DIR / "vision"       # EfficientNet checkpoints
+GEMMA_MODEL_DIR = MODEL_DIR / "gemma"         # LoRA adapters
+RAG_DB_DIR = MODEL_DIR / "rag_db"              # Vector database files
 
-OUTPUT_DIR = PROJECT_ROOT / "outputs"         # 평가 결과, 그래프 등
+OUTPUT_DIR = PROJECT_ROOT / "outputs"          # Evaluation results, plots
 LOG_DIR = PROJECT_ROOT / "logs"
 
 # ============================================================
-# 2. 데이터셋 설정
+# 2. Dataset configuration
 # ============================================================
-# HAM10000 클래스 정의 (7-class)
+# HAM10000 7-class taxonomy
 CLASS_NAMES = [
-    "akiec",   # 광선각화증 / 보웬병 (Actinic Keratoses)
-    "bcc",     # 기저세포암 (Basal Cell Carcinoma)
-    "bkl",     # 양성 각화증 (Benign Keratosis)
-    "df",      # 피부섬유종 (Dermatofibroma)
-    "mel",     # 멜라노마 (Melanoma) ← 핵심 소수 클래스
-    "nv",      # 멜라닌세포모반 (Melanocytic Nevi) ← 다수 클래스
-    "vasc",    # 혈관병변 (Vascular Lesions)
+    "akiec",   # Actinic Keratoses / Bowen's Disease
+    "bcc",     # Basal Cell Carcinoma
+    "bkl",     # Benign Keratosis
+    "df",      # Dermatofibroma
+    "mel",     # Melanoma (critical minority class)
+    "nv",      # Melanocytic Nevi (majority class)
+    "vasc",    # Vascular Lesions
 ]
 
-# 악성 vs 양성 이진 분류 매핑
-MALIGNANT_CLASSES = ["mel", "bcc", "akiec"]  # 악성/전암성
-BENIGN_CLASSES = ["nv", "bkl", "df", "vasc"]  # 양성
+# Binary classification mapping
+MALIGNANT_CLASSES = ["mel", "bcc", "akiec"]  # Malignant / pre-malignant
+BENIGN_CLASSES = ["nv", "bkl", "df", "vasc"]  # Benign
 
-# 합성데이터로 보강할 소수 클래스 (목표: 클래스당 1,500장)
+# Minority classes for synthetic augmentation (target: 1,500 samples per class)
 MINORITY_CLASSES = ["mel", "df", "vasc", "akiec"]
 TARGET_SAMPLES_PER_CLASS = 1500
 
 # ============================================================
-# 3. 전처리 설정
+# 3. Image preprocessing
 # ============================================================
-IMAGE_SIZE = 224                # EfficientNet-B4 입력 크기
-NORMALIZATION_MEAN = [0.7635, 0.5461, 0.5705]  # HAM10000 통계값
-NORMALIZATION_STD = [0.1409, 0.1520, 0.1693]
+IMAGE_SIZE = 224                                  # EfficientNet-B4 input size
+NORMALIZATION_MEAN = [0.7635, 0.5461, 0.5705]     # HAM10000 channel-wise mean
+NORMALIZATION_STD = [0.1409, 0.1520, 0.1693]      # HAM10000 channel-wise std
 
 # ============================================================
-# 4. Vision Classifier 설정 (Stage 1)
+# 4. Vision Classifier configuration (Stage 1)
 # ============================================================
 VISION_CONFIG = {
-    "model_name": "efficientnet_b4",   # timm 모델명
+    "model_name": "efficientnet_b4",      # timm model identifier
     "pretrained": True,
-    "num_classes": len(CLASS_NAMES),    # 7
+    "num_classes": len(CLASS_NAMES),       # 7
     "batch_size": 32,
     "num_workers": 4,
     "epochs": 50,
@@ -69,67 +72,63 @@ VISION_CONFIG = {
     "weight_decay": 1e-4,
     "scheduler": "cosine",
     "early_stopping_patience": 7,
-    "grad_cam_enabled": True,          # Grad-CAM 시각화 활성화
+    "grad_cam_enabled": True,              # Enable Grad-CAM visualization
     "seed": 42,
+    # Loss function with class imbalance handling
+    "loss_function": "focal",              # Options: "ce" | "focal" | "ce+focal"
+    "focal_gamma": 2.0,                    # Focus parameter for hard samples
+    "focal_alpha": None,                   # If None, use class weights
 }
 
-VISION_CONFIG.update({
-    "loss_function": "focal",   # "ce" | "focal" | "ce+focal"
-    "focal_gamma": 2.0,         # 어려운 샘플에 더 집중
-    "focal_alpha": None,        # None이면 class_weights 사용
-})
 # ============================================================
-# 5. Gemma LoRA 설정 (Stage 2)
+# 5. Gemma 4 LoRA fine-tuning configuration (Stage 2)
 # ============================================================
-
-
 GEMMA_CONFIG = {
     "base_model": "google/gemma-4-E4B-it",
-    "quantization": "bfloat16",            # 4080 16GB 대응 (bf16도 가능)
-    "lora_r": 32, # 32
-    "lora_alpha": 16, # 64
+    "quantization": "bfloat16",            # bf16 fits 16GB VRAM (RTX 4080)
+    "lora_r": 32,
+    "lora_alpha": 16,
     "lora_dropout": 0.05,
     "lora_target_modules": [
-    "q_proj.linear", 
-    "k_proj.linear", 
-    "v_proj.linear", 
-    "o_proj.linear",
-    "gate_proj.linear",
-    "up_proj.linear",
-    "down_proj.linear"
-],
+        "q_proj.linear",
+        "k_proj.linear",
+        "v_proj.linear",
+        "o_proj.linear",
+        "gate_proj.linear",
+        "up_proj.linear",
+        "down_proj.linear",
+    ],
     "batch_size": 1,
     "gradient_accumulation_steps": 16,
-    "lr": 5e-5, #2e-4,
-    #"warmup_ratio": 0.03,
+    "lr": 5e-5,
     "warmup_steps": 50,
-    "epochs": 3, # 3
-    "max_seq_length": 2048, # 2048
-    "freeze_vision_encoder": True,     # Vision encoder 고정 (안정성)
+    "epochs": 3,
+    "max_seq_length": 2048,
+    "freeze_vision_encoder": True,         # Freeze vision encoder for stability
 }
 
 # ============================================================
-# 6. RAG 설정
+# 6. RAG configuration
 # ============================================================
 RAG_CONFIG = {
-    "embedding_model": "BAAI/bge-m3", #"all-MiniLM-L6-v2"(영어전용),  # 경량 임베딩 (22MB)
-    "chunk_size": 512,             # 토큰 단위 청크 크기
+    "embedding_model": "BAAI/bge-m3",     # Multilingual embedding (1024-dim)
+    "chunk_size": 512,                     # Token-level chunk size
     "chunk_overlap": 64,
-    "top_k": 5,                    # 검색 시 반환할 문서 수
-    "db_type": "sqlite_vec",       # 태블릿 호환 (chromadb는 개발용)
+    "top_k": 5,                            # Number of documents to retrieve
+    "db_type": "sqlite_vec",               # Tablet-friendly (chromadb for dev)
 }
 
 # ============================================================
-# 7. Confidence Gate 설정
+# 7. Confidence gate
 # ============================================================
-CONFIDENCE_THRESHOLD = 0.70        # 이 이상일 때만 상세 분석 진행
+CONFIDENCE_THRESHOLD = 0.70                # Threshold for detailed analysis
 ESCALATION_MESSAGE = (
-    "분류 신뢰도가 기준({threshold:.0%}) 미만입니다. "
-    "정확한 판단을 위해 피부과 전문의 상담을 권고합니다."
+    "Classifier confidence is below the threshold ({threshold:.0%}). "
+    "Specialist dermatology consultation is recommended for accurate diagnosis."
 )
 
 # ============================================================
-# 8. 디렉터리 자동 생성
+# 8. Auto-create directories
 # ============================================================
 for d in [
     RAW_DIR, PROCESSED_DIR, SYNTHETIC_DIR, RAG_DIR, SPLIT_DIR,
