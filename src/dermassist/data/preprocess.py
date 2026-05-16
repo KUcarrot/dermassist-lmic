@@ -1,16 +1,17 @@
 """
-01_download_and_preprocess.py
-=============================
-[Vision 트랙 - 1주차] 데이터 다운로드 → 전처리 → 학습/검증/테스트 분할
+preprocess.py
+=============
+Data download → preprocessing → train/val/test split pipeline.
 
-실행: python3 01_download_and_preprocess.py
+Run via:
+    python scripts/01_prepare_data.py
 
-처리 흐름:
-  1. HAM10000 + PH2 다운로드 (Kaggle API / 수동)
-  2. DullRazor 모발 제거 + CLAHE 대비 보정
-  3. 224x224 리사이즈 + 정규화 통계 계산
-  4. Stratified 7:1:2 분할 (PH2는 완전 외부 holdout)
-  5. 클래스 분포 시각화 저장
+Processing flow:
+  1. Download HAM10000 + PH2 (Kaggle API or manual)
+  2. DullRazor hair removal + CLAHE contrast enhancement
+  3. Resize to 224x224 + compute normalization statistics
+  4. Stratified 7:1:2 split (PH2 as external holdout)
+  5. Save class distribution visualization
 """
 
 import os
@@ -28,114 +29,135 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use("Agg")  # GUI 없는 환경 대응 Anti-Grain Geometry
-plt.rcParams["font.family"] = "Malgun Gothic"  # Windows 한글 폰트
+matplotlib.use("Agg")  # Headless backend for environments without GUI
+
+# Use DejaVu Sans (default matplotlib font, available on all platforms)
+plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["axes.unicode_minus"] = False
 
-# --- 프로젝트 루트를 sys.path에 추가 ---
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from configs.config import (
-    RAW_DIR, PROCESSED_DIR, SPLIT_DIR, OUTPUT_DIR,
-    CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
-    IMAGE_SIZE, NORMALIZATION_MEAN, NORMALIZATION_STD,
-)
+# Add project root to sys.path for configs import
+try:
+    from configs.config import (
+        RAW_DIR, PROCESSED_DIR, SPLIT_DIR, OUTPUT_DIR,
+        CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
+        IMAGE_SIZE, NORMALIZATION_MEAN, NORMALIZATION_STD,
+    )
+except ImportError:
+    _project_root = Path(__file__).resolve().parent.parent.parent.parent
+    if str(_project_root) not in sys.path:
+        sys.path.insert(0, str(_project_root))
+    from configs.config import (
+        RAW_DIR, PROCESSED_DIR, SPLIT_DIR, OUTPUT_DIR,
+        CLASS_NAMES, MALIGNANT_CLASSES, BENIGN_CLASSES,
+        IMAGE_SIZE, NORMALIZATION_MEAN, NORMALIZATION_STD,
+    )
 
 
 # ============================================================
-# 1. 데이터 다운로드
+# 1. Data download
 # ============================================================
 def download_ham10000():
     """
-    HAM10000 데이터셋 다운로드.
-    Kaggle API 토큰이 설정되어 있어야 합니다.
-    수동 다운로드: https://www.kaggle.com/datasets/kmader/skin-cancer-mnist-ham10000
+    Download the HAM10000 dataset.
+
+    Requires Kaggle API credentials to be configured.
+    Manual download:
+        https://www.kaggle.com/datasets/kmader/skin-cancer-mnist-ham10000
     """
     ham_dir = RAW_DIR / "ham10000"
     if ham_dir.exists() and len(list(ham_dir.glob("*.jpg"))) > 9000:
-        print(f"[건너뜀] HAM10000 이미 존재: {ham_dir}")
+        print(f"[Skip] HAM10000 already exists: {ham_dir}")
         return ham_dir
 
     ham_dir.mkdir(parents=True, exist_ok=True)
-    print("[다운로드] HAM10000...")
+    print("[Download] HAM10000...")
 
     try:
         os.system(
             f"kaggle datasets download -d kmader/skin-cancer-mnist-ham10000 "
             f"-p {RAW_DIR} --unzip"
         )
-        # 다운로드 후 이미지를 한 폴더로 통합
+        # Consolidate images into a single folder
         for part_dir in RAW_DIR.glob("HAM10000_images_part*"):
             for img in part_dir.glob("*.jpg"):
                 shutil.move(str(img), str(ham_dir / img.name))
-        print(f"[완료] HAM10000: {len(list(ham_dir.glob('*.jpg')))}장")
+        print(f"[Done] HAM10000: {len(list(ham_dir.glob('*.jpg')))} images")
     except Exception as e:
-        print(f"[오류] Kaggle 다운로드 실패: {e}")
-        print("  → 수동으로 다운로드 후 data/raw/ham10000/ 에 이미지를 배치하세요.")
-        print("  → 메타데이터 CSV는 data/raw/HAM10000_metadata.csv 에 배치하세요.")
+        print(f"[Error] Kaggle download failed: {e}")
+        print("  Please download manually and place images at: data/raw/ham10000/")
+        print("  Place metadata CSV at: data/raw/HAM10000_metadata.csv")
 
     return ham_dir
 
 
-def download_ph2(): # 자동 다운안됨. 내가 수동으로 넣었음
+def download_ph2():
     """
-    PH2 데이터셋 다운로드 (200장, 외부 holdout 검증용).
-    공식: https://www.fc.up.pt/addi/ph2%20database.html
+    Download the PH2 dataset (200 images, used as external holdout validation).
+
+    Official source: https://www.fc.up.pt/addi/ph2%20database.html
+    Note: Automated download is unreliable; manual setup is required.
     """
     ph2_dir = RAW_DIR / "ph2"
     if ph2_dir.exists() and len(list(ph2_dir.rglob("*.bmp"))) > 100:
-        print(f"[건너뜀] PH2 이미 존재: {ph2_dir}")
+        print(f"[Skip] PH2 already exists: {ph2_dir}")
         return ph2_dir
 
     ph2_dir.mkdir(parents=True, exist_ok=True)
-    print("[다운로드] PH2...")
-    print("  → PH2는 자동 다운로드가 불안정합니다.")
-    print("  → 수동 다운로드 후 data/raw/ph2/ 에 배치하세요.")
-    print("  → 또는 ISIC Archive에서 동일 이미지 확보 가능:")
+    print("[Download] PH2...")
+    print("  Note: PH2 automated download is unreliable.")
+    print("  Please download manually and place at: data/raw/ph2/")
+    print("  Alternative: ISIC Archive has equivalent images at")
     print("    https://www.isic-archive.com/")
 
     return ph2_dir
 
 
 # ============================================================
-# 2. 전처리 파이프라인
+# 2. Preprocessing pipeline
 # ============================================================
 def dullrazor_hair_removal(image: np.ndarray) -> np.ndarray:
     """
-    DullRazor 알고리즘: 피부 영상에서 모발을 제거.
-    원리: blackhat 형태학 변환으로 모발 검출 → inpainting으로 제거.
+    DullRazor algorithm for hair removal from skin lesion images.
+
+    Principle: Detect hair via blackhat morphological operation,
+    then inpaint to restore the underlying skin pixels.
+
+    Reference: Lee et al. (1997) "DullRazor: A software approach
+    to hair removal from images."
 
     Args:
-        image: BGR 형식 OpenCV 이미지 (H, W, 3)
+        image: BGR-format OpenCV image (H, W, 3)
     Returns:
-        모발 제거된 이미지 (BGR)
+        Hair-removed image (BGR)
     """
-    # 그레이스케일 변환
+    # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    # Blackhat 변환: 어두운 선형 구조(모발) 강조
-    # 커널 크기 17은 일반적인 모발 두께에 적합
+    # Blackhat transform highlights dark linear structures (hair)
+    # Kernel size 17 is well-suited for typical hair thickness
     kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (17, 17))
     blackhat = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
 
-    # 이진화: 모발 영역 마스크 생성
+    # Threshold to create binary hair mask
     _, mask = cv2.threshold(blackhat, 10, 255, cv2.THRESH_BINARY)
 
-    # Inpainting: 모발 영역을 주변 피부색으로 복원
+    # Inpaint hair regions using surrounding skin pixels
     result = cv2.inpaint(image, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
     return result
 
 
 def apply_clahe(image: np.ndarray) -> np.ndarray:
     """
-    CLAHE (Contrast Limited Adaptive Histogram Equalization) 적용.
-    피부 병변의 미세한 색상·질감 차이를 강조.
-    LAB 색공간의 L 채널에만 적용하여 색상 왜곡 방지.
+    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization).
+
+    Enhances subtle color and texture variations in skin lesions.
+    Applied only to the L channel in LAB color space to preserve hue.
     """
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l_channel, a, b = cv2.split(lab)
 
-    # clipLimit=2.0: 과도한 대비 증가 방지
-    # tileGridSize=(8,8): 적응적 영역 크기
+    # clipLimit=2.0: prevent over-amplification of contrast
+    # tileGridSize=(8,8): adaptive local region size
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     l_enhanced = clahe.apply(l_channel)
 
@@ -149,25 +171,25 @@ def preprocess_single_image(
     target_size: int = IMAGE_SIZE,
 ) -> bool:
     """
-    단일 이미지 전처리 파이프라인:
-      1. 로드
-      2. DullRazor 모발 제거
-      3. CLAHE 대비 보정
-      4. 중앙 크롭 → 리사이즈 (비율 유지)
-      5. 저장 (PNG, 무손실)
+    Single-image preprocessing pipeline:
+      1. Load
+      2. DullRazor hair removal
+      3. CLAHE contrast enhancement
+      4. Center-crop to square then resize
+      5. Save as lossless PNG
     """
     try:
         img = cv2.imread(str(image_path))
         if img is None:
             return False
 
-        # Step 1: 모발 제거
+        # Step 1: Hair removal
         img = dullrazor_hair_removal(img)
 
         # Step 2: CLAHE
         img = apply_clahe(img)
 
-        # Step 3: 중앙 크롭 (정사각형) → 리사이즈
+        # Step 3: Center-crop to square, then resize
         h, w = img.shape[:2]
         min_dim = min(h, w)
         top = (h - min_dim) // 2
@@ -175,24 +197,25 @@ def preprocess_single_image(
         img = img[top : top + min_dim, left : left + min_dim]
         img = cv2.resize(img, (target_size, target_size), interpolation=cv2.INTER_AREA)
 
-        # Step 4: 저장
+        # Step 4: Save
         output_path.parent.mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(output_path), img)
         return True
     except Exception as e:
-        print(f"  [전처리 실패] {image_path.name}: {e}")
+        print(f"  [Preprocess failed] {image_path.name}: {e}")
         return False
 
 
 # ============================================================
-# 3. 메타데이터 로드 및 분할
+# 3. Metadata loading and split
 # ============================================================
 def load_ham10000_metadata() -> pd.DataFrame:
     """
-    HAM10000 메타데이터 CSV 로드.
-    필수 컬럼: image_id, dx (진단명), dx_type, age, sex, localization
+    Load HAM10000 metadata CSV.
+
+    Required columns: image_id, dx (diagnosis), dx_type, age, sex, localization.
     """
-    # 가능한 메타데이터 경로들
+    # Candidate metadata paths
     candidates = [
         RAW_DIR / "HAM10000_metadata.csv",
         RAW_DIR / "HAM10000_metadata",
@@ -201,25 +224,27 @@ def load_ham10000_metadata() -> pd.DataFrame:
     for path in candidates:
         if path.exists():
             df = pd.read_csv(path)
-            print(f"[메타데이터] 로드 완료: {path.name} ({len(df)}행)")
+            print(f"[Metadata] Loaded: {path.name} ({len(df)} rows)")
             return df
 
     raise FileNotFoundError(
-        f"HAM10000 메타데이터를 찾을 수 없습니다. "
-        f"다음 경로 중 하나에 배치하세요: {[str(c) for c in candidates]}"
+        f"HAM10000 metadata not found. "
+        f"Please place it at one of: {[str(c) for c in candidates]}"
     )
 
 
 def create_stratified_split(df: pd.DataFrame) -> dict:
     """
-    Stratified 7:1:2 분할.
-    - 동일 병변(lesion_id)은 같은 분할에 배치 (데이터 누수 방지).
-    - 클래스 비율 유지.
+    Stratified 7:1:2 split (train:val:test).
+
+    - Images with the same lesion_id are placed in the same split
+      to prevent data leakage.
+    - Class proportions are preserved across splits.
 
     Returns:
-        {"train": [...image_ids], "val": [...], "test": [...]}
+        {"train": [image_ids], "val": [...], "test": [...]}
     """
-    # 동일 lesion_id 그룹화: 중복 이미지가 서로 다른 분할에 들어가는 것을 방지
+    # Group by lesion_id to prevent duplicate images across splits
     if "lesion_id" in df.columns:
         lesion_df = df.groupby("lesion_id").first().reset_index()
         unique_col = "lesion_id"
@@ -227,7 +252,7 @@ def create_stratified_split(df: pd.DataFrame) -> dict:
         lesion_df = df.copy()
         unique_col = "image_id"
 
-    # 1차 분할: train(70%) + temp(30%)
+    # First split: train (70%) + temp (30%)
     train_ids, temp_ids = train_test_split(
         lesion_df[unique_col],
         test_size=0.30,
@@ -235,16 +260,16 @@ def create_stratified_split(df: pd.DataFrame) -> dict:
         stratify=lesion_df["dx"],
     )
 
-    # 2차 분할: val(10%) + test(20%) → temp를 1:2로 분할
+    # Second split: val (10%) + test (20%) - split temp at 1:2 ratio
     temp_df = lesion_df[lesion_df[unique_col].isin(temp_ids)]
     val_ids, test_ids = train_test_split(
         temp_df[unique_col],
-        test_size=0.667,  # temp의 2/3 → 전체의 ~20%
+        test_size=0.667,  # 2/3 of temp = ~20% of total
         random_state=42,
         stratify=temp_df["dx"],
     )
 
-    # lesion_id → image_id 매핑 (lesion_id 기반 분할이면)
+    # Map lesion_id back to image_id if using lesion-based split
     splits = {}
     for name, ids in [("train", train_ids), ("val", val_ids), ("test", test_ids)]:
         if unique_col == "lesion_id":
@@ -257,18 +282,20 @@ def create_stratified_split(df: pd.DataFrame) -> dict:
 
 
 # ============================================================
-# 4. 정규화 통계 계산
+# 4. Normalization statistics
 # ============================================================
 def compute_normalization_stats(image_dir: Path, image_ids: list) -> dict:
     """
-    학습 세트 이미지로부터 채널별 mean, std 계산.
-    이 값은 Vision Classifier와 Gemma Vision 입력 모두에 사용.
+    Compute per-channel mean and std from the training set.
+
+    These statistics are used for both the Vision Classifier and
+    Gemma vision encoder input normalization.
     """
     pixel_sum = np.zeros(3, dtype=np.float64)
     pixel_sq_sum = np.zeros(3, dtype=np.float64)
     count = 0
 
-    for img_id in tqdm(image_ids, desc="정규화 통계 계산"):
+    for img_id in tqdm(image_ids, desc="Computing normalization stats"):
         img_path = image_dir / f"{img_id}.png"
         if not img_path.exists():
             continue
@@ -287,12 +314,13 @@ def compute_normalization_stats(image_dir: Path, image_ids: list) -> dict:
 
 
 # ============================================================
-# 5. 클래스 분포 시각화
+# 5. Class distribution visualization
 # ============================================================
 def plot_class_distribution(df: pd.DataFrame, splits: dict, save_path: Path):
     """
-    분할별 클래스 분포 시각화.
-    소수 클래스 불균형을 한눈에 파악 → 보고서 Figure 1 용.
+    Visualize class distribution per split.
+
+    Highlights minority class imbalance for the report (Figure 1).
     """
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
@@ -300,63 +328,64 @@ def plot_class_distribution(df: pd.DataFrame, splits: dict, save_path: Path):
         split_df = df[df["image_id"].isin(image_ids)]
         counts = split_df["dx"].value_counts().reindex(CLASS_NAMES, fill_value=0)
 
-        # 악성 클래스는 빨간색, 양성은 파란색
+        # Red for malignant classes, blue for benign
         colors = [
             "#e74c3c" if cls in MALIGNANT_CLASSES else "#3498db"
             for cls in CLASS_NAMES
         ]
         bars = ax.bar(CLASS_NAMES, counts.values, color=colors)
         ax.set_title(f"{split_name.upper()} (n={len(image_ids)})", fontsize=14)
-        ax.set_ylabel("이미지 수")
+        ax.set_ylabel("Number of images")
         ax.tick_params(axis="x", rotation=45)
 
-        # 막대 위에 수치 표시
+        # Annotate bar heights
         for bar, val in zip(bars, counts.values):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 10,
                     str(val), ha="center", va="bottom", fontsize=9)
 
     plt.suptitle(
-        "HAM10000 클래스 분포 (빨강: 악성/전암, 파랑: 양성)", fontsize=15, y=1.02
+        "HAM10000 Class Distribution (red: malignant/pre-malignant, blue: benign)",
+        fontsize=15, y=1.02
     )
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"[시각화] 저장: {save_path}")
+    print(f"[Plot] Saved to: {save_path}")
 
 
 # ============================================================
-# 6. 메인 실행
+# 6. Main entry point
 # ============================================================
 def main():
     print("=" * 60)
-    print(" [1주차] 데이터 다운로드 & 전처리 파이프라인")
+    print(" Data Download and Preprocessing Pipeline")
     print("=" * 60)
 
-    # --- Step 1: 다운로드 ---
+    # --- Step 1: Download ---
     ham_dir = download_ham10000()
     ph2_dir = download_ph2()
 
-    # --- Step 2: 메타데이터 로드 ---
+    # --- Step 2: Load metadata ---
     df = load_ham10000_metadata()
-    print(f"\n[클래스 분포 (원본)]")
+    print(f"\n[Original class distribution]")
     print(df["dx"].value_counts().to_string())
 
-    # 이진 레이블 추가
+    # Add binary label
     df["binary_label"] = df["dx"].apply(
         lambda x: "malignant" if x in MALIGNANT_CLASSES else "benign"
     )
 
-    # --- Step 3: 전처리 ---
-    print(f"\n[전처리] {len(df)}장 처리 중...")
+    # --- Step 3: Preprocessing ---
+    print(f"\n[Preprocessing] Processing {len(df)} images...")
     processed_dir = PROCESSED_DIR / "ham10000"
     success, fail = 0, 0
 
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="전처리"):
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Preprocessing"):
         img_id = row["image_id"]
-        # 원본 이미지 탐색 (ham10000 폴더 내)
+        # Search for source image
         src = ham_dir / f"{img_id}.jpg"
         if not src.exists():
-            # 대체 경로 시도
+            # Try alternate paths
             for alt in RAW_DIR.rglob(f"{img_id}.jpg"):
                 src = alt
                 break
@@ -371,14 +400,14 @@ def main():
         else:
             fail += 1
 
-    print(f"[전처리 완료] 성공: {success}, 실패: {fail}")
+    print(f"[Preprocessing done] Success: {success}, Failed: {fail}")
 
-    # --- Step 4: 학습/검증/테스트 분할 ---
+    # --- Step 4: Train/val/test split ---
     splits = create_stratified_split(df)
     for name, ids in splits.items():
-        print(f"  {name}: {len(ids)}장")
+        print(f"  {name}: {len(ids)} images")
 
-    # 분할 결과 CSV 저장
+    # Save split CSV
     split_records = []
     for name, ids in splits.items():
         for img_id in ids:
@@ -392,23 +421,23 @@ def main():
     split_df = pd.DataFrame(split_records)
     split_csv_path = SPLIT_DIR / "ham10000_splits.csv"
     split_df.to_csv(split_csv_path, index=False)
-    print(f"[분할 저장] {split_csv_path}")
+    print(f"[Split saved] {split_csv_path}")
 
-    # --- Step 5: 정규화 통계 ---
-    print("\n[정규화] 학습 세트 통계 계산...")
+    # --- Step 5: Normalization statistics ---
+    print("\n[Normalization] Computing training-set statistics...")
     norm_stats = compute_normalization_stats(processed_dir, splits["train"])
     norm_path = SPLIT_DIR / "normalization_stats.json"
     with open(norm_path, "w") as f:
         json.dump(norm_stats, f, indent=2)
     print(f"  Mean: {norm_stats['mean']}")
     print(f"  Std:  {norm_stats['std']}")
-    print(f"  저장: {norm_path}")
+    print(f"  Saved to: {norm_path}")
 
-    # --- Step 6: 시각화 ---
+    # --- Step 6: Visualization ---
     plot_class_distribution(df, splits, OUTPUT_DIR / "class_distribution.png")
 
     print("\n" + "=" * 60)
-    print(" 전처리 완료. 다음 단계: python3 02_baseline_train.py")
+    print(" Preprocessing complete. Next: python scripts/02_train_vision.py")
     print("=" * 60)
 
 
