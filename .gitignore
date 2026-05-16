@@ -96,3 +96,9 @@ src/dermassist/llm/train_lora.py
 
 # RAG DB build script (one-time use, medical_knowledge.db is the artifact)
 src/dermassist/rag/build_db.py
+
+# RAG build folder (DB is the artifact, code is one-time setup)
+src/dermassist/rag/
+
+# Vision training/evaluation folder (one-time setup, .pth files are the artifacts)
+src/dermassist/vision/
