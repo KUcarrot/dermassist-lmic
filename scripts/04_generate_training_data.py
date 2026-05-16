@@ -1,7 +1,7 @@
 """Generate 5,000 LMIC-specialized training samples for Gemma 4.
 
 Outputs JSONL file. Pre-generated dataset is available at:
-  https://huggingface.co/datasets/YOUR_USERNAME/dermassist-lmic-training-data
+  https://huggingface.co/datasets/KUcarrot/dermassist-lmic-training-data
 """
 import sys
 from pathlib import Path
