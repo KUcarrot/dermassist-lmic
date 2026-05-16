@@ -1,0 +1,47 @@
+# ============================================================
+# Skin Lesion Assistant - 의존성 패키지
+# RTX 4080 16GB + CUDA 12.x 환경 기준
+# ============================================================
+
+# --- Core ML ---
+torch==2.4.1
+torchvision==0.19.1 --index-url https://download.pytorch.org/whl/cu121
+timm==1.0.9                   # EfficientNet-B4 등 pretrained 모델
+scikit-learn==1.5.2
+numpy==1.26.4
+pandas==2.2.3
+# --- Vision Preprocessing ---
+opencv-python-headless==4.10.0.84
+albumentations==1.4.16        # 의료 영상 augmentation
+Pillow==10.4.0
+
+# --- Gemma LoRA Fine-tuning ---
+transformers==4.45.2
+peft==0.13.2                  # LoRA 어댑터
+accelerate==1.0.1
+bitsandbytes==0.44.1          # INT8/INT4 양자화
+datasets==3.0.1
+trl==0.11.4                   # SFTTrainer
+
+# --- Synthetic Data (Diffusion) ---
+diffusers==0.31.0
+
+# --- RAG ---
+sentence-transformers==3.1.1  # 임베딩 모델
+sqlite-vec==0.1.9             # 경량 벡터 검색 (태블릿 호환)
+chromadb==0.5.11              # 개발용 (데스크탑)
+PyMuPDF==1.27.2.2             # pdf
+# --- UI & Serving ---
+gradio==5.4.0
+ollama==0.3.3                 # Ollama Python client
+
+# --- Evaluation ---
+matplotlib==3.9.2
+seaborn==0.13.2
+scikit-image==0.24.0
+
+# --- Utilities ---
+tqdm==4.66.6
+kaggle==1.6.17                # Kaggle 데이터셋 다운로드
+gdown==5.2.0                  # Google Drive 다운로드
+python-dotenv==1.0.1

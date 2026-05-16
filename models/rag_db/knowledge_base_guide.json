@@ -1,0 +1,11 @@
+{
+  "db_path": "C:\\donggeun\\Gemma4\\models\\rag_db\\medical_knowledge.db",
+  "총_청크": 246,
+  "임베딩_모델": "paraphrase-multilingual-MiniLM-L12-v2",
+  "소스_통계": {
+    "txt": 37,
+    "seed": 10,
+    "pdf": 199
+  },
+  "PDF_추가_방법": "data/rag_knowledge/ 에 PDF를 넣고 재실행"
+}

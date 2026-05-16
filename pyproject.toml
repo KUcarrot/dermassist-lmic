@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dermassist-lmic"
+version = "1.0.0"
+description = "Offline-first AI dermatology screening for Sub-Saharan Africa and LMICs"
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Donggeun Kim", email = "jikksun@korea.ac.kr"}
+]
+keywords = [
+    "dermatology",
+    "medical-ai",
+    "gemma",
+    "lora",
+    "LMIC",
+    "offline-ai",
+    "skin-cancer-screening",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+requires-python = ">=3.10"
+
+# IMPORTANT: 의존성 버전은 검증된 환경에 맞춰 엄격히 명시
+# 이 버전 조합은 RTX 4080 16GB VRAM, Windows, Python 3.10에서 검증됨
+dependencies = [
+    # Core ML - Gemma 4 호환을 위한 엄격한 버전 명시
+    "torch==2.6.0",
+    "transformers==5.5.4",          # Gemma 4 지원 버전 (다운그레이드 금지)
+    "peft==0.19.1",
+    "bitsandbytes==0.49.2",
+    "accelerate==1.13.0",
+    "sentence-transformers==3.1.1",
+    "huggingface_hub==1.12.2",      # transformers 5.x와 호환
+    # Vision
+    "Pillow==10.4.0",
+    "opencv-python==4.13.0.92",
+    "timm==1.0.9",
+    "torchvision==0.21.0",
+    # RAG
+    "faiss-cpu==1.13.2",
+    # UI
+    "gradio==6.13.0",
+    # Data - numpy 1.x 유지 (2.x는 호환성 문제 가능)
+    "pandas==2.2.3",
+    "numpy==1.26.4",                # NumPy 2.x 업그레이드 방지
+    "matplotlib==3.9.2",
+    "tqdm==4.66.6",
+    "scikit-learn==1.5.2",
+    # Utilities
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/YOUR_USERNAME/dermassist-lmic"
+Documentation = "https://github.com/YOUR_USERNAME/dermassist-lmic/blob/main/README.md"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/dermassist-lmic/issues"
+
+[project.scripts]
+dermassist-demo = "dermassist.ui.gradio_app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.woff2", "*.md"]

@@ -1,0 +1,86 @@
+﻿# ============================================================
+# DermAssist LMIC - .gitignore
+# ============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ============================================================
+# Project-specific: large files (DO NOT UPLOAD)
+# ============================================================
+
+# Datasets (download from Kaggle / ISIC Archive)
+data/raw/
+data/processed/
+data/external/
+
+# Trained models (use HuggingFace Hub instead)
+models/vision/*.pth
+models/rag_db/*.db
+models/gemma/lora_adapter*/
+
+# Evaluation outputs (regenerate by running scripts)
+outputs/
+
+# Gradio runtime
+.gradio/
+
+# Logs
+logs/
+*.log
+
+# But keep small example files
+!examples/*.jpg
+!examples/*.png
+
+# Temp files
+*.tmp
+.cache/
+
+# OS
+Thumbs.db
+
+# Hugging Face cache (very large)
+.cache/huggingface/
+
+# Personal config (if any)
+.env
+secrets.json
