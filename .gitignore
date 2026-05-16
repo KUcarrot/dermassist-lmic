@@ -93,3 +93,6 @@ src/dermassist/evaluation/validate_demo.py
 
 # Training script (one-time use, LoRA adapter is published separately)
 src/dermassist/llm/train_lora.py
+
+# RAG DB build script (one-time use, medical_knowledge.db is the artifact)
+src/dermassist/rag/build_db.py
