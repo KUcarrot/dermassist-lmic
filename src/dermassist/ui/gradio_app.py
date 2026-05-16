@@ -1,20 +1,20 @@
 """
-gradio_app.py (v3 - 모듈 구조 적용)
-=================================================================
+gradio_app.py
+=============
 DermAssist LMIC Gradio UI.
 
-위치: src/dermassist/ui/gradio_app.py
+Location: src/dermassist/ui/gradio_app.py
 
-기능:
-1. DullRazor 모발 제거 전처리
-2. UI 레이아웃: Original → Preprocessed (모발 제거) → Grad-CAM 3컬럼
-3. 한글 라벨 영어로 강제 (show_label=False + 명시적 영어 label)
-4. Noto Sans 폰트 적용
+Features:
+1. DullRazor hair removal preprocessing
+2. UI layout: Original -> Preprocessed -> Grad-CAM (3 columns)
+3. English labels enforced (show_label=False with explicit English labels)
+4. Noto Sans font applied via base64 CSS embedding
 
-요구사항:
-  - fonts/ 폴더가 프로젝트 루트에 있어야 함
-  - opencv-python (cv2) 필수
-  - pip install -e . 완료된 상태
+Requirements:
+  - fonts/ directory at project root
+  - opencv-python (cv2)
+  - pip install -e . completed
 
 Run:
   python scripts/06_run_demo.py
@@ -39,9 +39,9 @@ import matplotlib.pyplot as plt
 import cv2
 
 # ============================================================
-# 프로젝트 내부 imports (새 모듈 구조)
+# Project-internal imports (new module structure)
 # ============================================================
-# configs.config: 프로젝트 루트의 configs/ 디렉터리
+# configs.config: configs/ directory at project root
 try:
     from configs.config import (
         PROCESSED_DIR, VISION_MODEL_DIR, RAG_DB_DIR,
@@ -50,8 +50,8 @@ try:
         CONFIDENCE_THRESHOLD,
     )
 except ImportError:
-    # configs를 찾지 못하면 프로젝트 루트를 sys.path에 추가
-    # src/dermassist/ui/gradio_app.py → 프로젝트 루트 (4단계 위)
+    # If configs not found, add project root to sys.path
+    # src/dermassist/ui/gradio_app.py -> project root (4 levels up)
     _project_root = Path(__file__).resolve().parent.parent.parent.parent
     if str(_project_root) not in sys.path:
         sys.path.insert(0, str(_project_root))
@@ -62,19 +62,19 @@ except ImportError:
         CONFIDENCE_THRESHOLD,
     )
 
-# Pipeline (같은 패키지 내)
+# Pipeline (same package)
 from dermassist.pipeline.assistant import (
     SkinLesionAssistant,
     PatientMetadata,
     validate_and_correct_response_en,
 )
 
-# Font loader (같은 ui 패키지)
+# Font loader (same ui package)
 from dermassist.ui.font_loader import build_font_css
 
 
 # ============================================================
-# 폰트 패밀리 상수
+# Font family constants
 # ============================================================
 FONT_FAMILY_SANS = "'Noto Sans', system-ui, -apple-system, sans-serif"
 FONT_FAMILY_MONO = "'Consolas', 'Monaco', 'Courier New', monospace"
@@ -84,6 +84,7 @@ FONT_FAMILY_MONO = "'Consolas', 'Monaco', 'Courier New', monospace"
 # 1. Offline Detection
 # ============================================================
 def is_truly_offline() -> bool:
+    """Check if the system has internet connectivity (DNS test)."""
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=2)
         return False
@@ -92,6 +93,7 @@ def is_truly_offline() -> bool:
 
 
 def get_network_status_html() -> str:
+    """Render network status badge (offline/online)."""
     if is_truly_offline():
         return f"""
         <div style="
@@ -201,17 +203,17 @@ SYMPTOMS_OPTIONS = [
 # ============================================================
 def dullrazor_preprocess(image_pil: Image.Image) -> Image.Image:
     """
-    DullRazor 알고리즘으로 모발 제거 전처리.
+    DullRazor hair-removal preprocessing for dermoscopy images.
 
-    원리:
-      1. Grayscale 변환
-      2. Black-hat morphology로 어두운 선형 구조 (모발) 검출
-      3. 임계값 처리로 모발 마스크 생성
-      4. cv2.inpaint로 주변 픽셀 보간
+    Algorithm:
+      1. Grayscale conversion
+      2. Black-hat morphology to detect dark linear structures (hair)
+      3. Threshold to create hair mask
+      4. cv2.inpaint to interpolate from surrounding pixels
 
-    참고:
+    Reference:
         Lee et al. (1997) "DullRazor: A software approach to hair
-        removal from images" - 의료 영상 표준 전처리
+        removal from images" - standard medical imaging preprocessing.
     """
     img = np.array(image_pil.convert("RGB"))
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
@@ -231,7 +233,7 @@ def create_gradcam_overlay(
     cam_map: np.ndarray,
     alpha: float = 0.4,
 ) -> Image.Image:
-    """Create Grad-CAM heatmap overlay on original image."""
+    """Create Grad-CAM heatmap overlay on the original image."""
     img_array = np.array(original_image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE)))
 
     cam_min, cam_max = cam_map.min(), cam_map.max()
@@ -252,7 +254,7 @@ def create_gradcam_overlay(
 
 
 # ============================================================
-# 5. Result Formatting (Noto Sans 적용)
+# 5. Result Formatting (Noto Sans applied)
 # ============================================================
 URGENCY_BADGES = {
     "routine": ("🟢 Routine", "#16a34a", "Routine follow-up — no urgent action needed"),
@@ -262,6 +264,7 @@ URGENCY_BADGES = {
 
 
 def format_recommendation_html(response: Dict, classifier_output: Dict) -> str:
+    """Render urgency badge + clinical recommendation as HTML."""
     urgency = response.get("urgency", "soon")
     badge_text, badge_color, badge_subtitle = URGENCY_BADGES.get(urgency, URGENCY_BADGES["soon"])
 
@@ -323,6 +326,7 @@ def format_recommendation_html(response: Dict, classifier_output: Dict) -> str:
 
 
 def format_patient_summary_html(response: Dict) -> str:
+    """Render plain-language patient summary as HTML."""
     summary = response.get("patient_summary", "No patient summary available")
     return f"""
     <div style="
@@ -346,6 +350,7 @@ def format_patient_summary_html(response: Dict) -> str:
 
 
 def format_visual_analysis_html(classifier_output: Dict, response: Dict) -> str:
+    """Render Grad-CAM description, ABCDE table, and Top-3 candidates as HTML."""
     abcde = response.get("abcde_analysis", {})
     grad_cam = classifier_output.get("grad_cam_description", "")
     top3 = classifier_output.get("top3", [])
@@ -401,6 +406,7 @@ def format_visual_analysis_html(classifier_output: Dict, response: Dict) -> str:
 
 
 def format_limitations_html(response: Dict) -> str:
+    """Render AI limitations and evidence sources as HTML."""
     limitations = response.get("limitations", "")
     sources = response.get("evidence_sources", [])
 
@@ -447,7 +453,7 @@ def format_limitations_html(response: Dict) -> str:
 # 6. Pipeline Manager
 # ============================================================
 class PipelineManager:
-    """Pre-warmed pipeline manager."""
+    """Pre-warmed pipeline manager loaded in background thread."""
 
     def __init__(self):
         self.assistant: Optional[SkinLesionAssistant] = None
@@ -456,6 +462,7 @@ class PipelineManager:
         self.load_message = "Not loaded"
 
     def prewarm(self):
+        """Pre-load all pipeline components in the background."""
         if self.assistant is not None or self.is_loading:
             return
 
@@ -503,6 +510,7 @@ pipeline_mgr = PipelineManager()
 
 
 def get_pipeline_status_html() -> str:
+    """Render pipeline loading status badge."""
     if pipeline_mgr.assistant is not None:
         return f"""
         <div style="background:#16a34a; color:white; padding:8px 16px;
@@ -530,7 +538,7 @@ def get_pipeline_status_html() -> str:
 
 
 # ============================================================
-# 7. Main Inference Function (DullRazor 추가)
+# 7. Main Inference Function (includes DullRazor preprocessing)
 # ============================================================
 def run_analysis(
     image: Image.Image,
@@ -545,7 +553,7 @@ def run_analysis(
     resource_constraint: str,
     progress=gr.Progress(),
 ):
-    """Run full analysis pipeline (with DullRazor preprocessing display)."""
+    """Run the full analysis pipeline (with DullRazor preprocessing display)."""
 
     if image is None:
         empty_html = (
@@ -574,7 +582,7 @@ def run_analysis(
 
     t_total = time.time()
 
-    # DullRazor 전처리 (시각적 표시용)
+    # DullRazor preprocessing (visual display)
     progress(0.05, desc="Preprocessing: hair removal (DullRazor)...")
     t_dullrazor = time.time()
     try:
@@ -586,13 +594,13 @@ def run_analysis(
         preprocessed_img = image
         elapsed_dullrazor = 0.0
 
-    # 임시 파일 저장 (분류는 원본 이미지 사용)
+    # Save temp file (classification uses original image)
     progress(0.1, desc="Processing image...")
     temp_dir = Path("/tmp") if os.name != "nt" else Path(os.environ.get("TEMP", "."))
     temp_path = temp_dir / f"gradio_temp_{int(time.time())}.png"
     image.save(temp_path)
 
-    # 환자 컨텍스트 구성
+    # Build patient context
     progress(0.2, desc="Building patient context...")
     profile_data = PROFILE_MAPPING.get(
         patient_profile, PROFILE_MAPPING["General LMIC patient"]
@@ -635,7 +643,7 @@ def run_analysis(
         clf_output, patient_meta, rag_context,
     )
 
-    # validate_and_correct_response_en은 위에서 이미 import했으므로 직접 호출
+    # validate_and_correct_response_en already imported above
     response = validate_and_correct_response_en(response, clf_output)
 
     elapsed_pipeline = time.time() - t_pipeline
@@ -693,6 +701,7 @@ def run_analysis(
 # 8. Gradio UI Layout
 # ============================================================
 def build_ui() -> tuple[gr.Blocks, str]:
+    """Build the Gradio Blocks UI and return (demo, custom_css)."""
     font_css = build_font_css()
 
     custom_css = font_css + """
@@ -824,7 +833,7 @@ def build_ui() -> tuple[gr.Blocks, str]:
             with gr.Column(scale=2):
                 gr.Markdown("### Analysis Results")
 
-                # 3컬럼 이미지 표시
+                # 3-column image display
                 with gr.Row():
                     original_display = gr.Image(
                         label="Original",
@@ -909,7 +918,7 @@ def build_ui() -> tuple[gr.Blocks, str]:
 # ============================================================
 def main():
     print("=" * 60)
-    print(" Skin Lesion Assistant — Gradio UI")
+    print(" Skin Lesion Assistant - Gradio UI")
     print(" (Noto Sans + DullRazor + English Labels)")
     print("=" * 60)
     print(f" Network status: {'OFFLINE' if is_truly_offline() else 'ONLINE'}")
@@ -924,7 +933,7 @@ def main():
     demo.launch(
         server_name="127.0.0.1",
         server_port=7860,
-        share=False, # surver open
+        share=False,
         inbrowser=True,
         theme=gr.themes.Soft(),
         css=custom_css,

@@ -1,19 +1,18 @@
 """
 font_loader.py
 ==============
-Noto Sans 폰트를 base64로 인코딩하여 CSS에 임베드.
+Embed Noto Sans fonts as base64 into CSS for Gradio UI.
 
-사용:
-  from font_loader import build_font_css
+Usage:
+    from dermassist.ui.font_loader import build_font_css
+    custom_css = build_font_css() + "..."
 
-  custom_css = build_font_css() + "..."
+Required files (relative to project root):
+    fonts/NotoSans-Regular.woff2  (font-weight: 400)
+    fonts/NotoSans-Medium.woff2   (font-weight: 500)
+    fonts/NotoSans-Bold.woff2     (font-weight: 700)
 
-요구 파일:
-  fonts/NotoSans-Regular.woff2  (font-weight: 400)
-  fonts/NotoSans-Medium.woff2   (font-weight: 500)
-  fonts/NotoSans-Bold.woff2     (font-weight: 700)
-
-폰트 파일이 없으면 빈 CSS 반환 (시스템 폰트로 폴백).
+Falls back to system fonts if font files are missing (empty CSS returned).
 """
 
 import base64
@@ -24,52 +23,54 @@ from typing import Optional
 
 @lru_cache(maxsize=None)
 def _encode_font_base64(font_path: str) -> Optional[str]:
-    """폰트 파일을 base64로 인코딩 (캐시됨)."""
+    """Encode font file as base64 (cached)."""
     path = Path(font_path)
     if not path.exists():
-        print(f"[Font] 파일 없음: {path}")
+        print(f"[Font] File not found: {path}")
         return None
 
     try:
         with open(path, "rb") as f:
             encoded = base64.b64encode(f.read()).decode()
-        print(f"[Font] 로드 완료: {path.name} ({len(encoded)/1024:.0f} KB base64)")
+        print(f"[Font] Loaded: {path.name} ({len(encoded)/1024:.0f} KB base64)")
         return encoded
     except Exception as e:
-        print(f"[Font] 로드 실패: {path.name}: {e}")
+        print(f"[Font] Load failed: {path.name}: {e}")
         return None
 
 
 def build_font_css(fonts_dir: Optional[Path] = None) -> str:
     """
-    Noto Sans 폰트를 base64 임베드한 CSS 생성.
+    Build CSS with Noto Sans fonts embedded as base64.
 
     Args:
-        fonts_dir: 폰트 디렉터리. None이면 현재 파일 위치의 fonts/ 사용.
+        fonts_dir: Font directory path. If None, uses project_root/fonts/.
 
     Returns:
-        @font-face 정의 + body font-family CSS.
-        폰트 로드 실패 시 빈 문자열 (시스템 폰트로 폴백).
+        CSS string with @font-face definitions and body font-family rules.
+        Returns empty string if font loading fails (falls back to system fonts).
     """
     if fonts_dir is None:
+        # This file: src/dermassist/ui/font_loader.py
+        # Project root: 4 levels up
         fonts_dir = Path(__file__).resolve().parent.parent.parent.parent / "fonts"
     else:
         fonts_dir = Path(fonts_dir)
 
     if not fonts_dir.exists():
-        print(f"[Font] fonts/ 디렉터리 없음: {fonts_dir}")
+        print(f"[Font] fonts/ directory not found: {fonts_dir}")
         return ""
 
-    # 3가지 weight 로드
+    # Load 3 font weights
     regular = _encode_font_base64(fonts_dir / "NotoSans-Regular.woff2")
     medium = _encode_font_base64(fonts_dir / "NotoSans-Medium.woff2")
     bold = _encode_font_base64(fonts_dir / "NotoSans-Bold.woff2")
 
     if not regular:
-        print("[Font] Regular 폰트 없음 — 시스템 폰트로 폴백")
+        print("[Font] Regular weight not found - falling back to system fonts")
         return ""
 
-    # CSS 빌드
+    # Build CSS
     css_parts = []
 
     # Regular (font-weight: 400)
@@ -114,7 +115,7 @@ def build_font_css(fonts_dir: Optional[Path] = None) -> str:
       font-family: 'Noto Sans', system-ui, -apple-system, sans-serif !important;
     }
 
-    /* Monospace 요소는 예외 처리 */
+    /* Monospace elements: preserve fixed-width fonts */
     .gradio-container code,
     .gradio-container pre,
     .gradio-container [data-testid="textbox"] textarea {
@@ -126,17 +127,17 @@ def build_font_css(fonts_dir: Optional[Path] = None) -> str:
 
 
 # ============================================================
-# 단위 테스트
+# Unit test
 # ============================================================
 if __name__ == "__main__":
     print("=" * 60)
-    print(" Font Loader 테스트")
+    print(" Font Loader Test")
     print("=" * 60)
 
     css = build_font_css()
     if css:
-        print(f"\n[성공] CSS 생성 완료 ({len(css)/1024:.0f} KB)")
-        print(f"\n[CSS 시작 부분 200자]")
+        print(f"\n[Success] CSS generated ({len(css)/1024:.0f} KB)")
+        print(f"\n[CSS preview - first 200 chars]")
         print(css[:200])
     else:
-        print("\n[실패] CSS 생성 실패 — fonts/ 디렉터리 확인")
+        print("\n[Failed] CSS generation failed - check fonts/ directory")
