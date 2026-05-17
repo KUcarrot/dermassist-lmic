@@ -919,7 +919,6 @@ def build_ui() -> tuple[gr.Blocks, str]:
 def main():
     print("=" * 60)
     print(" Skin Lesion Assistant - Gradio UI")
-    print(" (Noto Sans + DullRazor + English Labels)")
     print("=" * 60)
     print(f" Network status: {'OFFLINE' if is_truly_offline() else 'ONLINE'}")
     print(" Starting pre-warm in background thread...")
