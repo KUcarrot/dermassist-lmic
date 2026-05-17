@@ -309,7 +309,7 @@ If you use this work, please cite:
 
 MIT License — see [LICENSE](LICENSE) for details.
 
-Noto Sans fonts are licensed under [SIL Open Font License 1.1](fonts/OFL.txt).
+Noto Sans fonts are licensed under the [SIL Open Font License 1.1](https://openfontlicense.org/), and the font files are included locally in the repository to support zero-dependency offline rendering.
 
 The fine-tuned models on HuggingFace Hub are released under Apache 2.0. The base Gemma 4 model is subject to [Google's Gemma Terms of Use](https://ai.google.dev/gemma/terms).
 
