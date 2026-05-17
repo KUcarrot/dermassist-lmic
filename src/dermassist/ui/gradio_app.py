@@ -8,8 +8,7 @@ Location: src/dermassist/ui/gradio_app.py
 Features:
 1. DullRazor hair removal preprocessing
 2. UI layout: Original -> Preprocessed -> Grad-CAM (3 columns)
-3. English labels enforced (show_label=False with explicit English labels)
-4. Noto Sans font applied via base64 CSS embedding
+3. Noto Sans font applied via base64 CSS embedding
 
 Requirements:
   - fonts/ directory at project root
