@@ -14,7 +14,7 @@ In Sub-Saharan Africa, fewer than **1 dermatologist serves every 1,000,000 peopl
 
 ## Demo
 
-**Video demo:** [YouTube link](https://youtube.com/watch?v=YOUR_VIDEO_ID)
+**Video demo:** [YouTube link]([https://youtube.com/watch?v=YOUR_VIDEO_ID](https://www.youtube.com/watch?v=ybFOwMtd810))
 
 ---
 
